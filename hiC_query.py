@@ -1,47 +1,68 @@
 #!/usr/bin/python
 import argparse
+import os
+import sqlite3
+from sets import Set
 
-snps = {}
+def build_snp_index():
+	print "Building SNP index..."
+	snpIDs = Set([]) #Set of all dbSNP IDs, for quick validation
+	snp_index = {} #Links all dbSNP IDSs to a chromosome and a locus
+	for bed_fp in os.listdir("snps"):
+		print "\tProcessing " + bed_fp
+		bed = open("snps/" + bed_fp,'r')
+		for line in bed:
+			if line.startswith("track name"):
+				continue
+			snp = line.strip().split('\t')
+			snpIDs.add(snp[3])
+			snp_index[snp[3]] = (snp[0][snp[0].find("chr")+3:],int(snp[1]))
+		bed.close()
+	print "\tWriting ID set to file..."
+	snpIDs_file = open("snpIDs.pkl",'wb')
+	pickle.dump(snpIDs,snpIDs_file)
+	snpIDs_file.close()
+	print "\tWriting index to file..."
+	snp_index_file = open("snpIndex.pkl",'wb')
+	pickle.dump(snp_index,snp_index_file)
+	snp_index_file.close()
+	print "Done building SNP index."
 
-def process_input(args):
-	chr = args.locus[args.locus.find("chr")+3:args.locus.find(':')]
-	locus = int(args.locus[args.locus.find(':')+1:])
-	rao_table = open(args.table_fp,'r')
-	interactions = []
-	for line in rao_table:
-		interaction = line.strip().split(' ')
-		locus1 = int(interaction[3])
-		locus2 = int(interaction[7])
-		if ((interaction[2] == chr and (locus1-args.distance < locus and locus1+args.distance > locus)) or (interaction[6] == chr and (locus2-args.distance < locus and locus2+args.distance > locus))) and (int(interaction[9]) > args.mapq_cutoff and int(interaction[10]) > args.mapq_cutoff):
-			if interaction[2] == chr and (locus1-args.distance < locus and locus1+args.distance > locus):
-				interactions.append((interaction[6],locus2))
-			else:
-				interactions.append((interaction[2],locus1))
-		return interactions
+def process_inputs(loci):
+	inputs = []
+	for locus in loci:
+		if locus.startswith("rs"):
+			if not os.path.isfile("snpIndex.pkl") or not os.path.isfile("snpIDs.pkl"): #Need to build SNP index
+				build_snp_index()
+			print "Loading SNP IDs..."
+			snpIDs_file = open("snpIDs.pkl",'rb')
+			snpIDs = pickle.load(snpIDs_file)
+			snpIDs_file.close()
+			print "Loading SNP index..."
+			snp_index_file = open("snpIndex.pkl",'rb')
+			snp_index = pickle.load(snp_index_file)
+			snp_index_file.close()
+			break
+	for locus in loci:
+		print "Processing " + locus
+		if locus.startswith("rs"):
+			if locus in snpIDs:
+				inputs.append(snp_index[locus])
+		else:
+			inputs.append((locus[locus.find("chr")+3:locus.find(':')],int(locus[locus.find(':')+1:])))
+	return inputs
 
-def assign_snps(interactions):
-	for interaction in interactions:
-		chr = interaction[0]
-		locus = interaction[1]
-		if snps[chr] == None: #If snps are not yet loaded
-			snps_to_load = open("snps/bed_chr_" + chr + ".bed",'r')
-			for line in snps_to_load:
-				snp = line.strip().split('\t')
-				snps[chr].append((int(snp[1]),snp[3]))
-			snps_to_load.close()
-			snps[chr].sort()
-		for snp in snps[chr]:
-			snp[0] = snp_locus
-			if snp_locus >= locus-args.distance and snp_locus <= locus+args.distance:
-				#???
-
+	
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
-	parser.add_argument("-l","--locus",help="The locus of interest in the format \"chr<x>:<locus>\"")
-	parser.add_argument("-t","--table_fp",help="TEMP: The Rao table from which to pull connections.")
-	parser.add_argument("-d","--distance",type=int,default=5000,help="The allowed distance from the locus of interest for a fragment to be considered.")
-	parser.add_argument("-m","--mapq_cutoff",type=int,default=150,help="The minimum mapq score allowed.")
+	parser.add_argument("-l","--loci",nargs='+',help="The the dbSNP ID or loci of interest in the format \"chr<x>:<locus>\"")
+	parser.add_argument("-t","--table_fp",default="HIC059_mapq150_chr21.txt",help="TEMP: The Rao table from which to pull connections...")
+	parser.add_argument("-d","--distance",type=int,default=500,help="The allowed distance from the locus of interest for a fragment to be considered...")
+	parser.add_argument("-m","--mapq_cutoff",type=int,default=150,help="The minimum mapq score allowed...")
 	args = parser.parse_args()
-	interactions = process_input(args)
-	snp_list = assign_snps(interactions)
-	print interactions
+	loci = args.loci
+	table_fp = args.table_fp
+	distance = args.distance
+	mapq_cutoff = args.mapq_cutoff
+	inputs = process_inputs(loci)
+	print inputs
