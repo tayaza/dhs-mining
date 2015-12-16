@@ -5,6 +5,8 @@ import sqlite3
 from sets import Set
 import time
 
+generate_circos_output = False
+
 def build_snp_index():
 	print "Building SNP index..."
 	snp_index_db = sqlite3.connect("snpIndex.test.db")
@@ -26,6 +28,7 @@ def build_snp_index():
 
 def process_inputs(inputs):
 	loci = []
+	
 	for input in inputs:
 		if input.startswith("rs"):
 			if not os.path.isfile("snpIndex.test.db"): #Need to build SNP index
@@ -37,7 +40,7 @@ def process_inputs(inputs):
 			break
 	print "Processing input..."
 	for input in inputs:
-		print "\tProcessing " + input
+		#print "\tProcessing " + input
 		if input.startswith("rs"):
 			snp_index.execute("SELECT chr, locus FROM snps WHERE rsID=?",(input,))
 			locus = snp_index.fetchone()
@@ -49,7 +52,7 @@ def process_inputs(inputs):
 			loci.append((input[input.find("chr")+3:input.find(':')],int(input[input.find(':')+1:])))
 	return loci
 
-def build_table_index(table_fp,mapq_cutoff):
+"""def build_table_index(table_fp,mapq_cutoff):
 	print "Indexing HiC interaction tables..."
 	table_index_db = sqlite3.connect("tableIndex.test.db")
 	table_index = table_index_db.cursor()
@@ -63,9 +66,9 @@ def build_table_index(table_fp,mapq_cutoff):
 	rao_table.close()
 	print "Writing table index to file..."
 	table_index_db.commit()
-	print "Done indexing HiC interaction tables."
+	print "Done indexing HiC interaction tables."""
 
-def find_interactions(loci,table_fp,distance,mapq_cutoff): ##Read database file
+"""def find_interactions_no_index(loci,table_fp,distance): ##Read database file
 	interactions = {}
 	#if not os.path.isfile("tableIndex.test.db"): #Need to index Rao table
 		#build_table_index(table_fp,mapq_cutoff)
@@ -75,14 +78,40 @@ def find_interactions(loci,table_fp,distance,mapq_cutoff): ##Read database file
 	for locus in loci:
 		print "\tFinding interactions for " + str(locus)
 		interactions[locus] = []
-		for interaction in table_index.execute("SELECT chr1, locus1, line FROM interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
+		for interaction in table_index.execute("SELECT chr1, locus1 FROM interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
 			interactions[locus].append(interaction)
-		for interaction in table_index.execute("SELECT chr2, locus2, line FROM interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
+		for interaction in table_index.execute("SELECT chr2, locus2 FROM interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
 			interactions[locus].append(interaction)
-	outfile = open("db_output_test.txt",'w')
+	return interactions"""
+
+def find_interactions(loci,db_dir,distance): ##Read database file
+	interactions = {}
+	open_dbs = []
+	db_dir = db_dir.strip('/') #Strip trailing '/' if it is there
+	#if not os.path.isfile("tableIndex.test.db"): #Need to index Rao table
+		#build_table_index(table_fp,mapq_cutoff)
+	table_index_db = sqlite3.connect(db_dir + "/dummy.db")
+	table_index_db.text_factory = str
+	table_index = table_index_db.cursor()
+	for locus in loci:
+		print "\tFinding interactions for " + str(locus)
+		if locus[0] not in open_dbs:
+			if len(open_dbs) >= 10:
+				table_index.execute("DETACH db" + open_dbs.pop())
+			table_index.execute("ATTACH '" + db_dir + '/' + db_dir[db_dir.rfind('/'):db_dir.rfind('_')] + '_' + locus[0] + ".db' AS db" + locus[0])
+		else:
+			open_dbs.remove(locus[0])
+		open_dbs.insert(0,locus[0])
+		interactions[locus] = []
+		for interaction in table_index.execute("SELECT chr1, locus1 FROM db" + locus[0] + ".interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
+			interactions[locus].append(interaction)
+		for interaction in table_index.execute("SELECT chr2, locus2 FROM db" + locus[0] + ".interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)",[locus[0],locus[1]-distance,locus[1]+distance]):
+			interactions[locus].append(interaction)
+	outfile = open("db_index_output_test.txt",'w')
 	for locus in interactions.keys():
 		for interaction in interactions[locus]:
-			outfile.write(locus[0] + '\t' + str(locus[1]) + '\t' + interaction[0] + '\t' + str(interaction[1]) + '\t' + interaction[2] + '\n')
+			outfile.write(locus[0] + '\t' + str(locus[1]) + '\t' + interaction[0] + '\t' + str(interaction[1]) + '\n')
+	os.remove(db_dir + "/dummy.db")
 	return interactions
 
 """def find_interactions_raw(loci,table_fp,distance,mapq_cutoff): ##Read raw HiC file, no indexing
@@ -116,12 +145,15 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
 	parser.add_argument("-i","--inputs",nargs='+',help="The the dbSNP ID or loci of interest in the format \"chr<x>:<locus>\"")
 	parser.add_argument("-t","--table_fp",default="HIC059_mapq150_chr21.test.txt",help="TEMP: The Rao table from which to pull connections.")
+	parser.add_argument("-x","--db_dir",default="GSM1551552_HIC003_merged_nodups_db",help="TEMP: The directory containing the chromosome-indexed database to search.")
 	parser.add_argument("-d","--distance",type=int,default=500,help="The allowed distance from the locus of interest for a fragment to be considered.")
 	parser.add_argument("-m","--mapq_cutoff",type=int,default=150,help="The minimum mapq score allowed.")
+	parser.add_argument("-c","--generate_circos_output",action="store_true",default=False,help="Produce Circos-compatible output files (default: False)")
 	args = parser.parse_args()
 	inputs = args.inputs
 	table_fp = args.table_fp
+	db_dir = args.db_dir
 	distance = args.distance
-	mapq_cutoff = args.mapq_cutoff
+	#mapq_cutoff = args.mapq_cutoff
 	loci = process_inputs(inputs)
-	interactions = find_interactions(loci,table_fp,distance,mapq_cutoff)
+	interactions = find_interactions(loci,db_dir,distance)
