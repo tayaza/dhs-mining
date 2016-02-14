@@ -5,11 +5,8 @@ import os
 
 def build_hic_table_index(table_fp,mapq_cutoff):
 	chr_set = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y","MT"]
-	"""if os.path.isdir(table_fp[:table_fp.rfind('.')]):
-		for f in os.listdir(table_fp[:table_fp.rfind('.')]):
-			os.remove(table_fp[:table_fp.rfind('.')] + '/' + f)
-	else:
-		os.mkdir(table_fp[:table_fp.rfind('.')])"""
+	if os.path.isfile(table_fp[:table_fp.rfind('.')] + ".db"):
+		os.remove(table_fp[:table_fp.rfind('.')] + ".db")
 	
 	table_index_db = sqlite3.connect(table_fp[:table_fp.rfind('.')] + ".db")
 	table_index = table_index_db.cursor()
@@ -40,7 +37,7 @@ def build_hic_table_index(table_fp,mapq_cutoff):
 			if int(interaction[9]) >= mapq_cutoff and int(interaction[10]) >= mapq_cutoff:
 				table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?)" % chr1,[chr1,int(interaction[3]),chr2,int(interaction[7])])
 				if not chr1 == chr2:
-					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?)" % chr1,[chr1,int(interaction[3]),chr2,int(interaction[7])])
+					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?)" % chr2,[chr1,int(interaction[3]),chr2,int(interaction[7])])
 	table_index_db.commit()
 	print "Done indexing HiC interaction table."
 
