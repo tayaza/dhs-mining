@@ -11,7 +11,7 @@ def build_hic_table_index(table_fp,mapq_cutoff):
 	table_index_db = sqlite3.connect(table_fp[:table_fp.rfind('.')] + ".db")
 	table_index = table_index_db.cursor()
 	for chr in chr_set:
-		table_index.execute("CREATE TABLE chr%s_interactions (chr1 text, locus1 integer, chr2 text, locus2 integer)" % chr)
+		table_index.execute("CREATE TABLE chr%s_interactions (chr1 text, locus1 integer, fragment1 integer, chr2 text, locus2 integer, fragment2 integer)" % chr)
 		table_index.execute("CREATE INDEX chr%s_loci ON chr%s_interactions (chr1,locus1,chr2,locus2)" % (chr,chr))
 	##Do line count for progress meter
 	do_linecount = True
@@ -35,9 +35,9 @@ def build_hic_table_index(table_fp,mapq_cutoff):
 			chr1 = interaction[2]
 			chr2 = interaction[6]
 			if int(interaction[9]) >= mapq_cutoff and int(interaction[10]) >= mapq_cutoff:
-				table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?)" % chr1,[chr1,int(interaction[3]),chr2,int(interaction[7])])
+				table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr1,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
 				if not chr1 == chr2:
-					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?)" % chr2,[chr1,int(interaction[3]),chr2,int(interaction[7])])
+					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr2,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
 	table_index_db.commit()
 	print "Done indexing HiC interaction table."
 

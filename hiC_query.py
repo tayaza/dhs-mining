@@ -2,6 +2,7 @@
 import argparse
 import os
 import sqlite3
+import pybedtools
 from sets import Set
 
 def build_snp_index(snp_database_fp,snp_dir):
@@ -72,11 +73,17 @@ def find_interactions(snps,hic_data_dir,distance,include,exclude):
 						print "\t\t\tFinding interactions for " + str(snp)
 						snp_chr = snps[snp][0]
 						snp_locus = snps[snp][1]
-						for interaction in table_index.execute("SELECT chr1, locus1 FROM chr%s_interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
+						for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
 							interactions[snp].append(interaction)
-						for interaction in table_index.execute("SELECT chr2, locus2 FROM chr%s_interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
+						for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
 							interactions[snp].append(interaction)
 	return interactions
+
+def find_genes(interactions,fragment_bed_fp,gene_bed_fp):
+	#For each SNP
+		#Generate BED file of all fragments interacting with SNP-containing fragment
+		#Get intersection of this BED file with BED file detailing gene locations
+		#Return a list of genes with which SNP is interacting
 
 def find_eqtls(interactions,eqtl_data_dir):
 	print "Identifying eQTLs of interest..."
@@ -107,11 +114,18 @@ if __name__ == "__main__":
 	parser.add_argument("-s","--snp_database_fp",default="snpIndex.db",help="The database of SNPs to search for details on input dbSNP IDs (Optional - will try to build from files in SNP_DIR if non-existent.")
 	parser.add_argument("-t","--snp_dir",default="snps",help="The directory containing (BED) files of SNPs to use as a reference (the dbSNP Build 144 (GRCh37.p13) BED files by default).")
 	parser.add_argument("-c","--hic_data_dir",default="hic_data",help="The directory containing the directories representing cell lines of HiC experiment tables.")
+	parser.add_argument("-f","--fragment_bed_fp",default="Homo_sapiens.ensembl.release-74.MboI.fragments.bed",help="Bed file detailing the start and end points of HiC experiment fragments (hg19 fragmented by MboI by default.)")
+	parser.add_argument("-g","--gene_bed_fp",default="hg19_genes.bed",help="Bed file detailing locations of genes in genome (the UCSC known gene list for hg19 by default).")
 	parser.add_argument("-e","--eqtl_data_dir",default="eQTLs",help="The directory containing databases of eQTL data from various tissues (the GTEx Analysis V6 by default).")
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
+	genes = find_genes(interactions,args.fragment_bed_fp,args.gene_bed_fp)
 	eqtls = find_eqtls(interactions,args.eqtl_data_dir)
+	"""for snp in interactions.keys():
+		print snp + ':'
+		for interaction in interactions[snp]:
+			print "\t" + str(interaction)"""
 	for snp in interactions.keys():
 		print snp + ':'
 		for tissue in eqtls[snp].keys():
