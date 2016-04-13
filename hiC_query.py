@@ -97,11 +97,11 @@ def find_eqtls(interactions,eqtl_data_dir):
 		eqtl_index = eqtl_index_db.cursor()
 		tissue = db[:db.rfind('.')]
 		for snp in interactions.keys():
-			eqtls[snp][tissue] = [] #Create a list of relevant eQTLs for this tissue type
+			eqtls[snp][tissue] = Set([]) #Create a list of relevant eQTLs for this tissue type
 			for eqtl in eqtl_index.execute("SELECT gene_name, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=?",(snp,)): #Pull down all eQTLs related to a given SNP to test for relevance:
 				for interaction in interactions[snp]:
 					if eqtl[1] == interaction[0] and (eqtl[2] <= interaction[1] and eqtl[3] >= interaction[1]): #If an eQTL coincides with a spatial interaction, save it
-						eqtls[snp][tissue].append(eqtl)
+						eqtls[snp][tissue].add(eqtl)
 	return eqtls
 
 
