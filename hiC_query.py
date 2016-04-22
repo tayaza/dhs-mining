@@ -3,6 +3,7 @@ import argparse
 import os
 import sqlite3
 import pybedtools
+
 from sets import Set
 
 def build_snp_index(snp_database_fp,snp_dir):
@@ -34,21 +35,38 @@ def process_inputs(inputs,snp_database_fp,snp_dir):
 	snp_index = snp_index_db.cursor()
 	print "Processing input..."
 	for input in inputs:
-		snp = None
-		if input.startswith("rs"):
-			snp_index.execute("SELECT * FROM snps WHERE rsID=?",(input,))
+		if os.path.isfile(input):
+			with open(input,'r') as infile:
+				for line in infile:
+					id = line.strip().split(' ')[0]
+					snp = None
+					if id.startswith("rs"):
+						snp_index.execute("SELECT * FROM snps WHERE rsID=?",(id,))
+					else:
+						chr = id[id.find("chr")+3:id.find(':')]
+						locus = int(id[id.find(':')+1:])
+						snp_index.execute("SELECT * FROM snps WHERE chr=? and locus=?",[chr,locus])
+					snp = snp_index.fetchone()
+					if snp == None:
+						print "Warning: %s does not exist in SNP database." % id
+					else:
+						snps[snp[0]]=(snp[1],snp[2])
 		else:
-			chr = input[input.find("chr")+3:input.find(':')]
-			locus = int(input[input.find(':')+1:])
-			snp_index.execute("SELECT * FROM snps WHERE chr=? and locus=?",[chr,locus])
-		snp = snp_index.fetchone()
-		if snp == None:
-			print "Warning: %s does not exist in SNP database." % input
-		else:
-			snps[snp[0]]=(snp[1],snp[2])
+			snp = None
+			if input.startswith("rs"):
+				snp_index.execute("SELECT * FROM snps WHERE rsID=?",(input,))
+			else:
+				chr = input[input.find("chr")+3:input.find(':')]
+				locus = int(input[input.find(':')+1:])
+				snp_index.execute("SELECT * FROM snps WHERE chr=? and locus=?",[chr,locus])
+			snp = snp_index.fetchone()
+			if snp == None:
+				print "Warning: %s does not exist in SNP database." % input
+			else:
+				snps[snp[0]]=(snp[1],snp[2])
 	return snps
 
-def find_interactions(snps,hic_data_dir,distance,include,exclude):
+def find_interactions(snps,hic_data_dir,distance,include,exclude,cis_interactions_only):
 	print "Finding interactions..."
 	if include:
 		include_set = Set(include)
@@ -56,7 +74,7 @@ def find_interactions(snps,hic_data_dir,distance,include,exclude):
 		exclude_set = Set(exclude)
 	interactions = {}
 	for snp in snps.keys():
-		interactions[snp] = []
+		interactions[snp] = Set([])
 	for cell_line in os.listdir(hic_data_dir):
 		if (include and not cell_line in include) or (exclude and cell_line in exclude):
 			continue
@@ -73,10 +91,16 @@ def find_interactions(snps,hic_data_dir,distance,include,exclude):
 						print "\t\t\tFinding interactions for " + str(snp)
 						snp_chr = snps[snp][0]
 						snp_locus = snps[snp][1]
-						for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
-							interactions[snp].append(interaction)
-						for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
-							interactions[snp].append(interaction)
+						if(cis_interactions_only):
+							for interaction in table_index.execute("SELECT chr1, locus1 FROM chr%s_interactions WHERE (chr1=? and chr2=?) and (locus2 >= ? and locus2 <= ?)" % snp_chr,[snp_chr,snp_chr,snp_locus-distance,snp_locus+distance]):
+								interactions[snp].add(interaction)
+							for interaction in table_index.execute("SELECT chr2, locus2 FROM chr%s_interactions WHERE (chr1=? and chr2=?) and (locus1 >= ? and locus1 <= ?)" % snp_chr,[snp_chr,snp_chr,snp_locus-distance,snp_locus+distance]):
+								interactions[snp].add(interaction)
+						else:
+							for interaction in table_index.execute("SELECT chr1, locus1 FROM chr%s_interactions WHERE chr2=? and (locus2 >= ? and locus2 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
+								interactions[snp].add(interaction)
+							for interaction in table_index.execute("SELECT chr2, locus2 FROM chr%s_interactions WHERE chr1=? and (locus1 >= ? and locus1 <= ?)" % snp_chr,[snp_chr,snp_locus-distance,snp_locus+distance]):
+								interactions[snp].add(interaction)
 	return interactions
 
 def find_genes(interactions,fragment_bed_fp,gene_bed_fp):
@@ -89,21 +113,51 @@ def find_eqtls(interactions,eqtl_data_dir):
 	print "Identifying eQTLs of interest..."
 	eqtls = {} #A mapping of SNPs to different tissue types, which are in turn mapped to any eQTLs that coincide with a spatial interaction with said SNPs
 	for snp in interactions.keys():
-		eqtls[snp] = {}
+		eqtls[snp] = {} #Stores eQTLs relevant to this SNP, and, for each eQTL, a list of the tissues in which it is found
 	for db in os.listdir(eqtl_data_dir): #Iterate through databases of eQTLs by tissue type
-		print "\tQuerying " + db[:db.rfind('.')]
+		tissue = db[:db.rfind('.')]
+		print "\tQuerying " + tissue
 		eqtl_index_db = sqlite3.connect(eqtl_data_dir + '/' + db)
 		eqtl_index_db.text_factory = str
 		eqtl_index = eqtl_index_db.cursor()
-		tissue = db[:db.rfind('.')]
 		for snp in interactions.keys():
-			eqtls[snp][tissue] = [] #Create a list of relevant eQTLs for this tissue type
-			for eqtl in eqtl_index.execute("SELECT gene_name, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=?",(snp,)): #Pull down all eQTLs related to a given SNP to test for relevance:
+			for eqtl in eqtl_index.execute("SELECT gene_name, ens_id, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=?",(snp,)): #Pull down all eQTLs related to a given SNP to test for relevance:
 				for interaction in interactions[snp]:
-					if eqtl[1] == interaction[0] and (eqtl[2] <= interaction[1] and eqtl[3] >= interaction[1]): #If an eQTL coincides with a spatial interaction, save it
-						eqtls[snp][tissue].append(eqtl)
+					if eqtl[2] == interaction[0] and (eqtl[3] <= interaction[1] and eqtl[4] >= interaction[1]): #If an eQTL coincides with a spatial interaction, save it
+						if not eqtls[snp].has_key(eqtl):
+							eqtls[snp][eqtl] = Set([])
+						eqtls[snp][eqtl].add(tissue)
+	for snp in eqtls.keys():
+		print snp + ':'
+		for eqtl in eqtls[snp].keys():
+			print '\t' + str(eqtl)
+			print '\t\t' + str(eqtls[snp][eqtl])
 	return eqtls
 
+def produce_output(snps,interactions,eqtls,output_dir):
+	print "Producing output..."
+	if not os.path.isdir(output_dir):
+		os.mkdir(output_dir)
+	summary_table = open(output_dir + "/summary_table.txt",'w')
+	summary_table.write("SNP\tchr\tpos\tnum_contacts\tnum_eQTLs\n")
+	for snp in snps.keys():
+		summary_table.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + str(len(interactions[snp])) + '\t' + str(len(eqtls[snp])) + '\n')
+		snp_summary = open(output_dir + '/' + snp + ".txt",'w')
+		snp_summary.write("gene_name\tensembl_id\tchr\tstart_pos\tend_pos\tnum_tissues\ttissues\tdistance_from_snp\n")
+		for eqtl in eqtls[snp].keys():
+			distance_from_snp = 0
+			if(not snps[snp][0] == eqtl[2]):
+				distance_from_snp = None #Not applicable to trans interactions
+			elif(snps[snp][1] < eqtl[3]):
+				distance_from_snp = eqtl[3] - snps[snp][1]
+			elif(snps[snp][1] > eqtl[4]):
+				distance_from_snp = snps[snp][1] - eqtl[4]
+			snp_summary.write(eqtl[1] + '\t' + eqtl[0] + '\t' +eqtl[2] + '\t' + str(eqtl[3]) + '\t' + str(eqtl[4]) + '\t' + str(len(eqtls[snp][eqtl])) + '\t') 
+			for tissue in eqtls[snp][eqtl]:
+				snp_summary.write(tissue + ',') 
+			snp_summary.write('\t' + str(distance_from_snp) + '\n')
+		snp_summary.close()
+	summary_table.close()
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
@@ -117,18 +171,11 @@ if __name__ == "__main__":
 	parser.add_argument("-f","--fragment_bed_fp",default="Homo_sapiens.ensembl.release-74.MboI.fragments.bed",help="Bed file detailing the start and end points of HiC experiment fragments (hg19 fragmented by MboI by default.)")
 	parser.add_argument("-g","--gene_bed_fp",default="hg19_genes.bed",help="Bed file detailing locations of genes in genome (the UCSC known gene list for hg19 by default).")
 	parser.add_argument("-e","--eqtl_data_dir",default="eQTLs",help="The directory containing databases of eQTL data from various tissues (the GTEx Analysis V6 by default).")
+	parser.add_argument("-o","--output_dir",default="hiCquery_output",help="The directory in which to output results (\"hiCquery_output\" by default).")
+	parser.add_argument("-j","--cis_interactions_only",action="store_true",default=False,help="Consider only cis interactions, i.e. interactions occurring on the same chromosome.")
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
-	genes = find_genes(interactions,args.fragment_bed_fp,args.gene_bed_fp)
+	#genes = find_genes(interactions,args.fragment_bed_fp,args.gene_bed_fp)
 	eqtls = find_eqtls(interactions,args.eqtl_data_dir)
-	"""for snp in interactions.keys():
-		print snp + ':'
-		for interaction in interactions[snp]:
-			print "\t" + str(interaction)"""
-	for snp in interactions.keys():
-		print snp + ':'
-		for tissue in eqtls[snp].keys():
-			print '\t' + tissue + ':'
-			for eqtl in eqtls[snp][tissue]:
-				print '\t\t' + str(eqtl)
+	produce_output(snps,interactions,eqtls,args.output_dir)
