@@ -113,13 +113,30 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 								interactions[snp].add(interaction)
 	return interactions
 
-def find_genes(interactions,fragment_bed_fp,gene_bed_fp):
+def find_genes(interactions,fragment_database_fp,gene_bed_fp):
+	fragment_index_db = sqlite3.connect(fragment_database_fp)
+	fragment_index_db.text_factory = str
+	fragment_index = fragment_index_db.cursor()
+	hs_gene_bed = pybedtools.BedTool(gene_bed_fp)
+	genes = {}
 	for snp in interactions.keys():
 		#Generate BED file of all fragments interacting with SNP-containing fragment
+		genes[snp] = Set([])
+		temp_snp_bed = open("temp_snp_bed.bed",'w')
 		for interaction in interactions[snp]:
-			
+			fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",[interaction[0],interaction[1]])
+			fragment_pos = fragment_index.fetchone()
+			if fragment_pos == None:
+				print "Warning: error retrieving fragment " + interaction[1] + " on chromosome " + interaction[0] 
+			temp_snp_bed.write("%s\t%s\t%s\t%s\t" % (interaction[0],fragment_pos[0],fragment_pos[1])
+		temp_snp_bed.close()
+		int_bed = pybedtools.BedTool("temp_snp_bed.bed")
 		#Get intersection of this BED file with BED file detailing gene locations
+		gene_bed = hs_gene_bed.intersect(int_bed,u=True)
 		#Return a list of genes with which SNP is interacting
+		for feat in gene_bed:
+			genes[snp].add(feat.name)
+	return genes
 
 def find_eqtls(interactions,eqtl_data_dir):
 	print "Identifying eQTLs of interest..."
@@ -189,6 +206,8 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
-	#genes = find_genes(interactions,args.fragment_bed_fp,args.gene_bed_fp)
-	eqtls = find_eqtls(interactions,args.eqtl_data_dir)
-	produce_output(snps,interactions,eqtls,args.output_dir)
+	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
+	with open("test_gene_output.txt",'w') as test_gene_output:
+		test_gene_output.write(str(genes))
+	#eqtls = find_eqtls(interactions,args.eqtl_data_dir)
+	#produce_output(snps,interactions,eqtls,args.output_dir)
