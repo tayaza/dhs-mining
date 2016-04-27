@@ -128,7 +128,7 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 			fragment_pos = fragment_index.fetchone()
 			if fragment_pos == None:
 				print "Warning: error retrieving fragment " + interaction[1] + " on chromosome " + interaction[0] 
-			temp_snp_bed.write("%s\t%s\t%s\t%s\t" % (interaction[0],fragment_pos[0],fragment_pos[1])
+			temp_snp_bed.write("%s\t%s\t%s\t%s\t" % (interaction[0],fragment_pos[0],fragment_pos[1]))
 		temp_snp_bed.close()
 		int_bed = pybedtools.BedTool("temp_snp_bed.bed")
 		#Get intersection of this BED file with BED file detailing gene locations
