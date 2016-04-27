@@ -205,7 +205,7 @@ if __name__ == "__main__":
 	parser.add_argument("-j","--cis_interactions_only",action="store_true",default=False,help="Consider only cis interactions, i.e. interactions occurring on the same chromosome.")
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
-	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
+	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines,args.cis_interactions_only)
 	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
 	with open("test_gene_output.txt",'w') as test_gene_output:
 		test_gene_output.write(str(genes))
