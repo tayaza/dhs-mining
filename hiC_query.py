@@ -94,9 +94,9 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 					table_index = table_index_db.cursor()
 					for snp in snps.keys():
 						print "\t\t\tFinding interactions for " + str(snp)
-						fragment_index.execute("SELECT fragment FROM fragments WHERE chr=? AND start<=? AND end>=?",[snps[snp][0],snps[snp][1],snps[snp][1]])
+						fragment_index.execute("SELECT fragment FROM fragments WHERE chr=? AND start<=? AND end>=?",["chr" + snps[snp][0],snps[snp][1],snps[snp][1]])
 						snp_fragment_result = fragment_index.fetchone()
-						if snp_fragment == None:
+						if snp_fragment_result == None:
 							print "Warning: error retrieving SNP fragment for SNP " + snp
 							continue
 						snp_fragment = snp_fragment_result[0]
@@ -107,9 +107,9 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 							for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE (chr1=? and chr2=?) and fragment1=?" % snp_chr,[snp_chr,snp_chr,snp_fragment]):
 								interactions[snp].add(interaction)
 						else:
-							for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE chr2=? and fragment2=?)" % snp_chr,[snp_chr,snp_fragment]):
+							for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE chr2=? and fragment2=?" % snp_chr,[snp_chr,snp_fragment]):
 								interactions[snp].add(interaction)
-							for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE chr1=? and fragment1=?)" % snp_chr,[snp_chr,snp_fragment]):
+							for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE chr1=? and fragment1=?" % snp_chr,[snp_chr,snp_fragment]):
 								interactions[snp].add(interaction)
 	return interactions
 
@@ -124,18 +124,18 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 		genes[snp] = Set([])
 		temp_snp_bed = open("temp_snp_bed.bed",'w')
 		for interaction in interactions[snp]:
-			fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",[interaction[0],interaction[1]])
+			fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",["chr" + interaction[0],interaction[1]])
 			fragment_pos = fragment_index.fetchone()
 			if fragment_pos == None:
-				print "Warning: error retrieving fragment " + interaction[1] + " on chromosome " + interaction[0] 
-			temp_snp_bed.write("%s\t%s\t%s\t%s\t" % (interaction[0],fragment_pos[0],fragment_pos[1]))
+				print "Warning: error retrieving fragment %s on chromosome %s" % (interaction[1],interaction[0])
+			temp_snp_bed.write("%s\t%s\t%s\n" % ("chr" + interaction[0],fragment_pos[0],fragment_pos[1]))
 		temp_snp_bed.close()
 		int_bed = pybedtools.BedTool("temp_snp_bed.bed")
 		#Get intersection of this BED file with BED file detailing gene locations
 		gene_bed = hs_gene_bed.intersect(int_bed,u=True)
 		#Return a list of genes with which SNP is interacting
 		for feat in gene_bed:
-			genes[snp].add(feat.name)
+			genes[snp].add(str(feat.name))
 	return genes
 
 def find_eqtls(interactions,eqtl_data_dir):
