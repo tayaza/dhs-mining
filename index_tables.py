@@ -2,6 +2,7 @@
 import argparse
 import sqlite3
 import os
+from sets import Set
 
 def build_hic_table_index(table_fp,mapq_cutoff):
 	chr_set = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","X","Y","MT"]
@@ -35,9 +36,13 @@ def build_hic_table_index(table_fp,mapq_cutoff):
 			chr1 = interaction[2]
 			chr2 = interaction[6]
 			if int(interaction[9]) >= mapq_cutoff and int(interaction[10]) >= mapq_cutoff:
-				table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr1,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
-				if not chr1 == chr2:
-					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr2,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
+				try:
+					table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr1,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
+					if not chr1 == chr2:
+						table_index.execute("INSERT INTO chr%s_interactions VALUES (?,?,?,?,?,?)" % chr2,[chr1,int(interaction[3]),int(interaction[4]),chr2,int(interaction[7]),int(interaction[8])])
+				except sqlite3.OperationalError:
+					print "Warning: error inserting line \"%s\" into database." % line.strip()
+					continue
 	table_index_db.commit()
 	print "Done indexing HiC interaction table."
 
@@ -72,19 +77,60 @@ def build_eqtl_table_index(table_fp):
 	table_index_db.commit()
 	print "Done indexing eQTL table."
 
+def build_fragment_index(table_fp):
+	if os.path.isfile(table_fp[:table_fp.rfind('.')] + ".db"):
+		os.remove(table_fp[:table_fp.rfind('.')] + ".db")
+	fragment_index_fp = sqlite3.connect(table_fp[:table_fp.rfind('.')] + ".db")
+	fragment_index = fragment_index_fp.cursor()
+	fragment_index.execute("CREATE TABLE fragments (chr text, start integer, end integer, fragment integer)")
+	fragment_index.execute("CREATE INDEX f_index ON fragments (chr,fragment)")
+	
+	fragments_bed = open(table_fp,'r')
+	for line in fragments_bed:
+		fragment = line.strip().split('\t')
+		fragment_index.execute("INSERT INTO fragments VALUES (?,?,?,?)", [fragment[0][fragment[0].find("chr")+3:],fragment[1],fragment[2],fragment[3]])
+	fragment_index.commit()
+	fragments_bed.close()
+
+def build_snp_index(snp_dir):
+	print "Building SNP index..."
+	if not os.path.isdir(snp_dir):
+		print "Error: argument to build SNP index must be a directory."
+		break
+	if os.path.isfile(snp_dir + "/snpIndex.db"):
+		os.remove(snp_dir + "/snpIndex.db")
+	snp_index_db = sqlite3.connect(snp_dir + "/snpIndex.db")
+	snp_index = snp_index_db.cursor()
+	snp_index.execute("CREATE TABLE snps (rsID text, chr text, locus integer)")
+	snp_index.execute("CREATE INDEX id ON snps (rsID,chr,locus)")
+	for bed_fp in os.listdir(snp_dir):
+		print "\tProcessing " + bed_fp
+		bed = open(snp_dir + '/' + bed_fp,'r')
+		for line in bed:
+			if line.startswith("track name"):
+				continue
+			snp = line.strip().split('\t')
+			snp_index.execute("INSERT INTO snps VALUES(?,?,?)",[snp[3],snp[0][snp[0].find("chr")+3:],int(snp[1])])
+		bed.close()
+	print "\tWriting SNP index to file..."
+	snp_index_db.commit()
+	print "Done building SNP index."
+
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser(description="Indexes HiC and SNP tables into searchable databases. NOTE: must supply ONE of EQTL_INPUT and HIC_INPUT")
+	parser = argparse.ArgumentParser(description="Indexes HiC and SNP tables into searchable databases. NOTE: must supply an argument to INPUT_TYPE")
 	parser.add_argument("-t","--table")
-	parser.add_argument("-i","--hic_input",action="store_true",default=False,help="The input is a HiC table. NOTE: mutually exclusive with EQTL_INPUT.")
-	parser.add_argument("-e","--eqtl_input",action="store_true",default=False,help="The input is an eQTL table. NOTE: mutually excluse with HIC_INPUT.")
+	parser.add_argument("-i","--input_type",required=True,help="The input type of the table (valid options are 'h', for HiC, 'e', for eqtl, 'f', for fragmented genome BED, or 's', for SNP. In the case of SNP, a directory is the expected argument).")
 	parser.add_argument("-m","--mapq_cutoff",type=int,default=150,help="Mapq cutoff used to index HiC tables, not used for eQTL tables.")
 	args = parser.parse_args()
-	if args.hic_input and args.eqtl_input:
-		raise InputError("HiC input and eQTL input cannot both be true.")
-	if not args.hic_input and not args.eqtl_input:
-		raise InputError("One of HIC_INPUT and EQTL_INPUT must be specified.")
-	if args.hic_input:
+	opts = Set(['i','e','f','s'])
+	if not args.input_type in opts:
+		raise InputError("A valid input type must be specified.")
+	if args.input_type == 'h':
 		build_hic_table_index(args.table,args.mapq_cutoff)
-	elif args.eqtl_input:
+	elif args.input_type == 'e':
 		build_eqtl_table_index(args.table)
+	elif args.input_type == 'f':
+		build_fragment_index(args.table)
+	elif args.input_type == 's':
+		build_snp_index(args.table)
