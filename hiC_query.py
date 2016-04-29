@@ -138,10 +138,10 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 			genes[snp].add(str(feat.name))
 	return genes
 
-def find_eqtls(interactions,eqtl_data_dir):
+def find_eqtls(genes,eqtl_data_dir):
 	print "Identifying eQTLs of interest..."
 	eqtls = {} #A mapping of SNPs to genes with which they have an eQTL relationship, which in turn maps to a list of tissues in which this eQTL occurs
-	for snp in interactions.keys():
+	for snp in genes.keys():
 		eqtls[snp] = {} #Stores eQTLs relevant to this SNP, and, for each eQTL, a list of the tissues in which it is found
 	for db in os.listdir(eqtl_data_dir): #Iterate through databases of eQTLs by tissue type
 		tissue = db[:db.rfind('.')]
@@ -149,13 +149,12 @@ def find_eqtls(interactions,eqtl_data_dir):
 		eqtl_index_db = sqlite3.connect(eqtl_data_dir + '/' + db)
 		eqtl_index_db.text_factory = str
 		eqtl_index = eqtl_index_db.cursor()
-		for snp in interactions.keys():
-			for eqtl in eqtl_index.execute("SELECT gene_name, ens_id, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=?",(snp,)): #Pull down all eQTLs related to a given SNP to test for relevance:
-				for interaction in interactions[snp]:
-					if eqtl[2] == interaction[0] and (eqtl[3] <= interaction[1] and eqtl[4] >= interaction[1]): #If an eQTL coincides with a spatial interaction, save it
-						if not eqtls[snp].has_key(eqtl):
-							eqtls[snp][eqtl] = Set([])
-						eqtls[snp][eqtl].add(tissue)
+		for snp in genes.keys():
+			for gene in genes[snp]:
+				for eqtl in eqtl_index.execute("SELECT gene_name, ens_id, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
+					if not eqtls[snp].has_key(eqtl):
+						eqtls[snp][eqtl] = Set([])
+					eqtls[snp][eqtl].add(tissue)
 	for snp in eqtls.keys():
 		print snp + ':'
 		for eqtl in eqtls[snp].keys():
@@ -209,5 +208,5 @@ if __name__ == "__main__":
 	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
 	with open("test_gene_output.txt",'w') as test_gene_output:
 		test_gene_output.write(str(genes))
-	#eqtls = find_eqtls(interactions,args.eqtl_data_dir)
-	#produce_output(snps,interactions,eqtls,args.output_dir)
+	eqtls = find_eqtls(genes,args.eqtl_data_dir)
+	produce_output(snps,interactions,eqtls,args.output_dir)
