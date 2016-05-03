@@ -3,6 +3,7 @@ import argparse
 import os
 import sqlite3
 import pybedtools
+import requests
 
 from sets import Set
 
@@ -79,11 +80,12 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 		exclude_set = Set(exclude)
 	interactions = {} #A mapping of each SNP to the fragments with which the fragment it is on interacts
 	for snp in snps.keys():
-		interactions[snp] = Set([])
+		interactions[snp] = {}
 	for cell_line in os.listdir(hic_data_dir):
 		if (include and not cell_line in include) or (exclude and cell_line in exclude):
 			continue
 		if os.path.isdir(hic_data_dir + '/' + cell_line):
+			interactions[snp][cell_line] = Set([])
 			print "\tSearching cell line " + cell_line
 			for replicate in os.listdir(hic_data_dir + '/' + cell_line):
 				if replicate.endswith(".db"):
@@ -103,14 +105,14 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 						snp_chr = snps[snp][0]
 						if(cis_interactions_only):
 							for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE (chr1=? and chr2=?) and fragment2=?" % snp_chr,[snp_chr,snp_chr,snp_fragment]):
-								interactions[snp].add(interaction)
+								interactions[snp][cell_line].add(interaction)
 							for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE (chr1=? and chr2=?) and fragment1=?" % snp_chr,[snp_chr,snp_chr,snp_fragment]):
-								interactions[snp].add(interaction)
+								interactions[snp][cell_line].add(interaction)
 						else:
 							for interaction in table_index.execute("SELECT chr1, fragment1 FROM chr%s_interactions WHERE chr2=? and fragment2=?" % snp_chr,[snp_chr,snp_fragment]):
-								interactions[snp].add(interaction)
+								interactions[snp][cell_line].add(interaction)
 							for interaction in table_index.execute("SELECT chr2, fragment2 FROM chr%s_interactions WHERE chr1=? and fragment1=?" % snp_chr,[snp_chr,snp_fragment]):
-								interactions[snp].add(interaction)
+								interactions[snp][cell_line].add(interaction)
 	return interactions
 
 def find_genes(interactions,fragment_database_fp,gene_bed_fp):
@@ -123,12 +125,13 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 		#Generate BED file of all fragments interacting with SNP-containing fragment
 		genes[snp] = Set([])
 		temp_snp_bed = open("temp_snp_bed.bed",'w')
-		for interaction in interactions[snp]:
-			fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",["chr" + interaction[0],interaction[1]])
-			fragment_pos = fragment_index.fetchone()
-			if fragment_pos == None:
-				print "Warning: error retrieving fragment %s on chromosome %s" % (interaction[1],interaction[0])
-			temp_snp_bed.write("%s\t%s\t%s\n" % ("chr" + interaction[0],fragment_pos[0],fragment_pos[1]))
+		for cell_line in interactions[snp].keys():
+			for interaction in interactions[snp][cell_line]:
+				fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",["chr" + interaction[0],interaction[1]])
+				fragment_pos = fragment_index.fetchone()
+				if fragment_pos == None:
+					print "Warning: error retrieving fragment %s on chromosome %s" % (interaction[1],interaction[0])
+				temp_snp_bed.write("%s\t%s\t%s\n" % ("chr" + interaction[0],fragment_pos[0],fragment_pos[1]))
 		temp_snp_bed.close()
 		int_bed = pybedtools.BedTool("temp_snp_bed.bed")
 		#Get intersection of this BED file with BED file detailing gene locations
@@ -138,55 +141,121 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 			genes[snp].add(str(feat.name))
 	return genes
 
-def find_eqtls(interactions,eqtl_data_dir):
+def find_eqtls(genes,eqtl_data_dir,gene_database_fp,cis_interactions_only):
 	print "Identifying eQTLs of interest..."
 	eqtls = {} #A mapping of SNPs to genes with which they have an eQTL relationship, which in turn maps to a list of tissues in which this eQTL occurs
-	for snp in interactions.keys():
+	for snp in genes.keys():
 		eqtls[snp] = {} #Stores eQTLs relevant to this SNP, and, for each eQTL, a list of the tissues in which it is found
-	for db in os.listdir(eqtl_data_dir): #Iterate through databases of eQTLs by tissue type
-		tissue = db[:db.rfind('.')]
-		print "\tQuerying " + tissue
-		eqtl_index_db = sqlite3.connect(eqtl_data_dir + '/' + db)
-		eqtl_index_db.text_factory = str
-		eqtl_index = eqtl_index_db.cursor()
-		for snp in interactions.keys():
-			for eqtl in eqtl_index.execute("SELECT gene_name, ens_id, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=?",(snp,)): #Pull down all eQTLs related to a given SNP to test for relevance:
-				for interaction in interactions[snp]:
-					if eqtl[2] == interaction[0] and (eqtl[3] <= interaction[1] and eqtl[4] >= interaction[1]): #If an eQTL coincides with a spatial interaction, save it
-						if not eqtls[snp].has_key(eqtl):
-							eqtls[snp][eqtl] = Set([])
-						eqtls[snp][eqtl].add(tissue)
-	for snp in eqtls.keys():
-		print snp + ':'
-		for eqtl in eqtls[snp].keys():
-			print '\t' + str(eqtl)
-			print '\t\t' + str(eqtls[snp][eqtl])
+	if cis_interactions_only:
+		for db in os.listdir(eqtl_data_dir): #Iterate through databases of eQTLs by tissue type
+			tissue = db[:db.rfind('.')]
+			print "\tQuerying " + tissue
+			eqtl_index_db = sqlite3.connect(eqtl_data_dir + '/' + db)
+			eqtl_index_db.text_factory = str
+			eqtl_index = eqtl_index_db.cursor()
+			for snp in genes.keys():
+				for gene in genes[snp]:
+					for eqtl in eqtl_index.execute("SELECT gene_name, ens_id, gene_chr, gene_start, gene_end FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
+						if not eqtls[snp].has_key(gene):
+							eqtls[snp][gene] = {}
+							eqtls[snp][gene]["ens_id"] = eqtl[0]
+							eqtls[snp][gene]["gene_chr"] = eqtl[2]
+							eqtls[snp][gene]["gene_start"] = eqtl[3]
+							eqtls[snp][gene]["gene_end"] = eqtl[4]
+							eqtls[snp][gene]["tissues"] = Set([])
+						eqtls[snp][gene]["tissues"].add(tissue)
+	else:
+		eqtls = get_GTEx_response(genes,gene_database_fp)
 	return eqtls
 
-def produce_output(snps,interactions,eqtls,output_dir):
+def get_GTEx_response(genes,gene_database_fp):
+	tissues = Set(["Adipose_Subcutaneous","Adipose_Visceral_Omentum","Adrenal_Gland","Artery_Aorta","Artery_Coronary","Artery_Tibial","Brain_Amygdala","Brain_Anterior_cingulate_cortex_BA24","Brain_Caudate_basal_ganglia","Brain_Cerebellar_Hemisphere","Brain_Cerebellum","Brain_Cortex","Brain_Frontal_Cortex_BA9","Brain_Hippocampus","Brain_Hypothalamus","Brain_Nucleus_accumbens_basal_ganglia","Brain_Putamen_basal_ganglia","Brain_Spinal_cord_cervical_c-1","Brain_Substantia_nigra","Breast_Mammary_Tissue","Cells_EBV-transformed_lymphocytes","Cells_Transformed_fibroblasts","Colon_Sigmoid","Esophagus_Gastroesophageal_Junction","Esophagus_Mucosa","Esophagus_Muscularis","Heart_Atrial_Appendage","Heart_Left_Ventricle","Liver","Lung","Minor_Salivary_Gland","Muscle_Skeletal","Nerve_Tibial","Ovary","Pancreas","Pituitary","Prostate","Skin_Not_Sun_Exposed_Suprapubic","Skin_Sun_Exposed_Lower_leg","Small_Intestine_Terminal_Ileum","Spleen","Stomach","Testis","Thyroid","Uterus","Vagina","Whole_Blood"])
+	gene_index_db = sqlite3.connect(gene_database_fp)
+	gene_index_db.text_factory = str
+	gene_index = gene_index_db.cursor()
+	reqLists = [[]]
+	eqtls = {}
+	for snp in genes.keys():
+		for gene in genes[snp]:
+				for tissue in tissues:
+					if len(reqLists[-1]) < 1000:
+						reqLists[-1].append({"snpId":snp,"gencodeId":gene,"tissueName":tissue})
+					else:
+						reqLists.append([{"snpId":snp,"gencodeId":gene,"tissueName":tissue}])
+	gtexResponses = []
+	for reqList in reqLists:
+		print "\tSending request to GTEx API..."
+		print "\tLength of request list: " + str(len(reqList))
+		gtexResponses.append(requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList))
+		print "\tResponse received."
+	print "Number of GTEx responses: " + str(len(gtexResponses))
+	results = []
+	for response in gtexResponses:
+		results += response.json()["result"]
+	print "Total number of results: " + str(len(results))
+	for result in results:
+		geneSymbol = result["geneSymbol"]
+		gene_index.execute("SELECT p_thresh FROM genes WHERE symbol=?",[geneSymbol,])
+		try:
+			p_thresh = gene_index.fetchone()[0]
+		except TypeError:
+			print "Warning: no gene index entry for " + geneSymbol
+			continue
+		if result["pvalue"] == "NA" or float(result["pvalue"]) <= p_thresh:
+			snpId = result["snpId"]
+			if not eqtls.has_key(snpId):
+				eqtls[snpId] = {}
+			if not eqtls[snpId].has_key(geneSymbol):
+				eqtls[snpId][geneSymbol] = {}
+				eqtls[snpId][geneSymbol]["ens_id"] = result["gencodeId"]
+				eqtls[snpId][geneSymbol]["gene_chr"] = None #TODO
+				eqtls[snpId][geneSymbol]["gene_start"] = None #TODO
+				eqtls[snpId][geneSymbol]["gene_end"] = None #TODO
+				max_length = 0
+				for gene_stat in gene_index.execute("SELECT chr, start, end FROM genes WHERE symbol=?", [geneSymbol]):
+					if gene_stat[2] - gene_stat[1] > max_length: #Consider "canonical" to be the longest record where multiple records are present
+						if gene_stat[0].startswith("chr"):
+							eqtls[snpId][geneSymbol]["gene_chr"] = gene_stat[0][gene_stat[0].find("chr")+3:]
+						else:
+							eqtls[snpId][geneSymbol]["gene_chr"] = gene_stat[0]
+						eqtls[snpId][geneSymbol]["gene_start"] = gene_stat[1]
+						eqtls[snpId][geneSymbol]["gene_end"] = gene_stat[2]
+						max_length = gene_stat[2] - gene_stat[1]
+				eqtls[snpId][geneSymbol]["tissues"] = Set([])
+			eqtls[snpId][geneSymbol]["tissues"].add(result["tissueId"])
+	return eqtls
+
+def produce_output(snps,interactions,eqtls,output_dir,cis_interactions_only):
 	print "Producing output..."
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
 	summary_table = open(output_dir + "/summary_table.txt",'w')
-	summary_table.write("SNP\tchr\tpos\tnum_contacts\tnum_eQTLs\n")
+	summary_table.write("SNP\tchr\tpos\tnum_contacts\tcell_lines\tnum_eQTLs\n")
 	for snp in snps.keys():
-		summary_table.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + str(len(interactions[snp])) + '\t' + str(len(eqtls[snp])) + '\n')
+		interaction_sum = 0
+		for cell_line in interactions[snp].keys():
+			interaction_sum += len(interactions[snp][cell_line])
+		summary_table.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + str(interaction_sum) + '\t')
+		for cell_line in interactions[snp].keys():
+			summary_table.write(cell_line + ',')
+		summary_table.write('\t' + str(len(eqtls[snp])) + '\n')
 		snp_summary = open(output_dir + '/' + snp + ".txt",'w')
 		snp_summary.write("gene_name\tensembl_id\tchr\tstart_pos\tend_pos\tnum_tissues\ttissues\tdistance_from_snp\n")
-		for eqtl in eqtls[snp].keys():
+		for gene in eqtls[snp].keys():
 			distance_from_snp = 0
-			if(not snps[snp][0] == eqtl[2]):
+			if(not snps[snp][0] == eqtls[snp][gene]["gene_chr"]):
 				distance_from_snp = None #Not applicable to trans interactions
-			elif(snps[snp][1] < eqtl[3]):
-				distance_from_snp = eqtl[3] - snps[snp][1]
-			elif(snps[snp][1] > eqtl[4]):
-				distance_from_snp = snps[snp][1] - eqtl[4]
-			snp_summary.write(eqtl[1] + '\t' + eqtl[0] + '\t' +eqtl[2] + '\t' + str(eqtl[3]) + '\t' + str(eqtl[4]) + '\t' + str(len(eqtls[snp][eqtl])) + '\t') 
-			for tissue in eqtls[snp][eqtl]:
+			elif(snps[snp][1] < eqtls[snp][gene]["gene_start"]):
+				distance_from_snp = eqtls[snp][gene]["gene_start"] - snps[snp][1]
+			elif(snps[snp][1] > eqtls[snp][gene]["gene_end"]):
+				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
+			snp_summary.write(gene + '\t' + eqtls[snp][gene]["ens_id"] + '\t' + str(eqtls[snp][gene]["gene_chr"]) + '\t' + str(eqtls[snp][gene]["gene_start"]) + '\t' + str(eqtls[snp][gene]["gene_end"]) + '\t'  + str(len(eqtls[snp][gene]["tissues"])) + '\t') 
+			for tissue in eqtls[snp][gene]["tissues"]:
 				snp_summary.write(tissue + ',') 
 			snp_summary.write('\t' + str(distance_from_snp) + '\n')
 		snp_summary.close()
 	summary_table.close()
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
@@ -200,6 +269,7 @@ if __name__ == "__main__":
 	parser.add_argument("-f","--fragment_bed_fp",default="Homo_sapiens.ensembl.release-74.MboI.fragments.bed",help="Bed file detailing the start and end points of HiC experiment fragments (hg19 fragmented by MboI by default.)")
 	parser.add_argument("-b","--fragment_database_fp",default="fragmentIndex.db",help="The database of fragments to search when assigning SNPs to fragments (GRCh37 digested by MboI by default.)")
 	parser.add_argument("-g","--gene_bed_fp",default="hg19_genes.bed",help="Bed file detailing locations of genes in genome (the UCSC known gene list for hg19 by default).")
+	parser.add_argument("-a","--gene_database_fp",default="geneIndex.db",help="Database constructed from gene BED file.")
 	parser.add_argument("-e","--eqtl_data_dir",default="eQTLs",help="The directory containing databases of eQTL data from various tissues (the GTEx Analysis V6 by default).")
 	parser.add_argument("-o","--output_dir",default="hiCquery_output",help="The directory in which to output results (\"hiCquery_output\" by default).")
 	parser.add_argument("-j","--cis_interactions_only",action="store_true",default=False,help="Consider only cis interactions, i.e. interactions occurring on the same chromosome.")
@@ -207,7 +277,5 @@ if __name__ == "__main__":
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines,args.cis_interactions_only)
 	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
-	with open("test_gene_output.txt",'w') as test_gene_output:
-		test_gene_output.write(str(genes))
-	#eqtls = find_eqtls(interactions,args.eqtl_data_dir)
-	#produce_output(snps,interactions,eqtls,args.output_dir)
+	eqtls = find_eqtls(genes,args.eqtl_data_dir,args.gene_database_fp,args.cis_interactions_only)
+	produce_output(snps,interactions,eqtls,args.output_dir,args.cis_interactions_only)
