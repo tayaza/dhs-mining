@@ -95,6 +95,7 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 					table_index_db.text_factory = str
 					table_index = table_index_db.cursor()
 					for snp in snps.keys():
+                                                interactions[snp][cell_line] = Set([])
 						print "\t\t\tFinding interactions for " + str(snp)
 						fragment_index.execute("SELECT fragment FROM fragments WHERE chr=? AND start<=? AND end>=?",["chr" + snps[snp][0],snps[snp][1],snps[snp][1]])
 						snp_fragment_result = fragment_index.fetchone()
