@@ -249,12 +249,12 @@ def get_GTEx_response(snps,genes,gene_database_fp):
 			eqtls[snpId][geneSymbol]["gene_start"] = gene_start
 			eqtls[snpId][geneSymbol]["gene_end"] = gene_end
 			eqtls[snpId][geneSymbol]["p_thresh"] = gene_stat[3]
-			eqtls[snpId][geneSymbol]["tissues"] = Set([])
+			eqtls[snpId][geneSymbol]["tissues"] = {}
 			if cis:
 				eqtls[snpId][geneSymbol]["cis?"] = True
 			else:
 				eqtls[snpId][geneSymbol]["cis?"] = False
-		eqtls[snpId][geneSymbol]["tissues"].add((result["pvalue"],result["tissueId"]))
+		eqtls[snpId][geneSymbol]["tissues"][result["tissueId"]] = {"pvalue": result["pvalue"]}
 			
 	return eqtls
 
@@ -284,9 +284,11 @@ def produce_output(snps,interactions,eqtls,output_dir,cis_interactions_only):
 			elif(snps[snp][1] > eqtls[snp][gene]["gene_end"]):
 				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
 			snp_summary.write(gene + '\t' + eqtls[snp][gene]["ens_id"] + '\t' + str(eqtls[snp][gene]["p_thresh"]) + '\t' + str(eqtls[snp][gene]["gene_chr"]) + '\t' + str(eqtls[snp][gene]["gene_start"]) + '\t' + str(eqtls[snp][gene]["gene_end"]) + '\t'  + str(eqtls[snp][gene]["cis?"]) + '\t' + str(distance_from_snp) + '\t') 
-			tissues = list(eqtls[snp][gene]["tissues"])
-			tissues.sort()
-			for tissue in tissues:
+			p_tissue = []
+			for tissue in eqtls[snp][gene]["tissues"].keys():
+				p_tissue.append((eqtls[snp][gene]["tissues"][tissue]["pvalue"],tissue))
+			p_tissue.sort()
+			for tissue in p_tissue:
 				snp_summary.write(tissue[1] + "(p=" + str(tissue[0]) + '),') 
 			snp_summary.write('\n')
 		snp_summary.close()
