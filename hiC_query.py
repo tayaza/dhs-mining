@@ -112,6 +112,7 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 	return interactions
 
 def find_genes(interactions,fragment_database_fp,gene_bed_fp):
+	print "Identifying interactions with genes..."
 	fragment_index_db = sqlite3.connect(fragment_database_fp)
 	fragment_index_db.text_factory = str
 	fragment_index = fragment_index_db.cursor()
@@ -136,6 +137,7 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 		#Return a list of genes with which SNP is interacting
 		for feat in gene_bed:
 			genes[snp].add(str(feat.name))
+	os.remove("temp_snp_bed.bed")
 	return genes
 
 def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,num_processes):
