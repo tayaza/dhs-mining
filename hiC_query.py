@@ -157,7 +157,7 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 		eqtl_index = eqtl_index_db.cursor()
 		for snp in genes.keys():
 			for gene in genes[snp]:
-				for eqtl in eqtl_index.execute("SELECT rsID, ens_id FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
+				for eqtl in eqtl_index.execute("SELECT rsID, gene_symbol FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
 					gene_chr = None
 					gene_start = None
 					gene_end = None
@@ -189,7 +189,7 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 						else:
 							eqtls[snp][gene]["cis?"] = False
 					try:
-						eqtl_index.execute("SELECT pvalue FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene))
+						eqtl_index.execute("SELECT pvalue FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene))
 						p = eqtl_index.fetchone()
 						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": p}
 					except sqlite3.OperationalError:
