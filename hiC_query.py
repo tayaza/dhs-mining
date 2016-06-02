@@ -5,6 +5,10 @@ import sqlite3
 import pybedtools
 import requests
 import multiprocessing
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+from matplotlib import style
 
 from sets import Set
 
@@ -157,7 +161,7 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 		eqtl_index = eqtl_index_db.cursor()
 		for snp in genes.keys():
 			for gene in genes[snp]:
-				for eqtl in eqtl_index.execute("SELECT rsID, ens_id FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
+				for eqtl in eqtl_index.execute("SELECT rsID, gene_symbol FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
 					gene_chr = None
 					gene_start = None
 					gene_end = None
@@ -189,7 +193,7 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 						else:
 							eqtls[snp][gene]["cis?"] = False
 					try:
-						eqtl_index.execute("SELECT pvalue FROM eqtls WHERE rsID=? AND ens_id=?",(snp,gene))
+						eqtl_index.execute("SELECT pvalue FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene))
 						p = eqtl_index.fetchone()
 						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": p}
 					except sqlite3.OperationalError:
@@ -306,6 +310,21 @@ def produce_output(snps,interactions,eqtls,output_dir):
 		snp_summary.close()
 	summary_table.close()
 
+def produce_graphs(snps,interactions,eqtls,output_dir):
+	chr_loc_snp = invert_snp_index(snps)
+	
+
+def invert_snp_index(snps):
+	chr_loc_snp = {}
+	for snp in snps.keys():
+		if not chr_loc_snp.has_key(snps[snp][0]):
+			chr_loc_snp[snps[snp][0]] = {}
+		chr_loc_snp[snps[snp][0]] = {snps[snp][1] : snp}
+	for chr in chr_loc_snp.keys:
+		#Get end coordinate of chromosome
+		#Create arrays with entries for each of the coordinates
+		#For keys in chr_loc_snp[chr]
+			#Do the thing
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
