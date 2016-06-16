@@ -111,7 +111,7 @@ def find_interactions(snps,fragment_database_fp,hic_data_dir,distance,include,ex
 							interactions[snp][cell_line].add(interaction)
 	return interactions
 
-def find_genes(interactions,fragment_database_fp,gene_bed_fp):
+def find_genes(snps,interactions,fragment_database_fp,gene_bed_fp):
 	print "Identifying interactions with genes..."
 	fragment_index_db = sqlite3.connect(fragment_database_fp)
 	fragment_index_db.text_factory = str
@@ -120,24 +120,32 @@ def find_genes(interactions,fragment_database_fp,gene_bed_fp):
 	genes = {}
 	for snp in interactions.keys():
 		#Generate BED file of all fragments interacting with SNP-containing fragment
-		genes[snp] = Set([])
+		snpgenes_exist = False
 		temp_snp_bed = open("temp_snp_bed.bed",'w')
 		for cell_line in interactions[snp].keys():
 			for interaction in interactions[snp][cell_line]:
 				fragment_index.execute("SELECT start, end FROM fragments WHERE chr=? and fragment=?",["chr" + interaction[0],interaction[1]])
 				fragment_pos = fragment_index.fetchone()
 				if fragment_pos == None:
-					print "Warning: error retrieving fragment %s on chromosome %s" % (interaction[1],interaction[0])
+					print "\tWarning: error retrieving fragment %s on chromosome %s" % (interaction[1],interaction[0])
 					continue
 				temp_snp_bed.write("%s\t%s\t%s\n" % ("chr" + interaction[0],fragment_pos[0],fragment_pos[1]))
+				if not snpgenes_exist:
+					snpgenes_exist = True
 		temp_snp_bed.close()
-		int_bed = pybedtools.BedTool("temp_snp_bed.bed")
-		#Get intersection of this BED file with BED file detailing gene locations
-		gene_bed = hs_gene_bed.intersect(int_bed,u=True)
-		#Return a list of genes with which SNP is interacting
-		for feat in gene_bed:
-			genes[snp].add(str(feat.name))
-	os.remove("temp_snp_bed.bed")
+		if snpgenes_exist:
+			genes[snp] = Set([])
+			int_bed = pybedtools.BedTool("temp_snp_bed.bed")
+			#Get intersection of this BED file with BED file detailing gene locations
+			gene_bed = hs_gene_bed.intersect(int_bed,u=True)
+			#Return a list of genes with which SNP is interacting
+			for feat in gene_bed:
+				genes[snp].add(str(feat.name))
+		else:
+			print "\tNo SNP-gene spatial interactions detected for %s, removing from analysis" % (snp,)
+			del snps[snp]
+			del interactions[snp]
+		os.remove("temp_snp_bed.bed")
 	return genes
 
 def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,num_processes):
@@ -161,6 +169,7 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 					gene_chr = None
 					gene_start = None
 					gene_end = None
+					p_thresh = None
 					if not eqtls[snp].has_key(gene):
 						try:
 							max_length = 0
@@ -183,14 +192,14 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 						eqtls[snp][gene]["gene_end"] = gene_end
 						eqtls[snp][gene]["p_thresh"] = p_thresh
 						eqtls[snp][gene]["tissues"] = {}
-						cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_start + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
+						cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_end + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
 						if cis:
 							eqtls[snp][gene]["cis?"] = True
 						else:
 							eqtls[snp][gene]["cis?"] = False
 					try:
 						eqtl_index.execute("SELECT pvalue FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene))
-						p = eqtl_index.fetchone()
+						p = eqtl_index.fetchone()[0]
 						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": p}
 					except sqlite3.OperationalError:
 						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": "NA"} #TODO
@@ -223,9 +232,18 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 	procPool.join()
 	print "\t\tNumber of GTEx responses received: " + str(len(gtexResponses))
 	results = []
+	error_log = open("hiC_query_error.log",'w')
 	for response in gtexResponses:
-		results += response.json()["result"]
+		try:
+			results += response[1].json()["result"]
+		except simplejson.scanner.JSONDecodeError:
+			print "\t\tWarning: bad response."
+			error_log.write("ReqList: " + str(response[0]) + "\nResponse: " + str(response[1]) + "\n\n")
 	for result in results:
+		gene_chr = None
+		gene_start = None
+		gene_end = None
+		p_thresh = None
 		geneSymbol = result["geneSymbol"]
 		snpId = result["snpId"]
 		try:
@@ -238,12 +256,13 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 						gene_chr = gene_stat[0]
 					gene_start = gene_stat[1]
 					gene_end = gene_stat[2]
+					p_thresh = gene_stat[3]
 					max_length = gene_stat[2] - gene_stat[1]
 		except TypeError:
 			print "\t\tWarning: No entry in gene database for " + geneSymbol
 			continue
 		
-		cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_start + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
+		cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_end + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
 		if result["pvalue"] != "NA":
 			if cis and float(result["pvalue"]) >= gene_stat[3]: #If a cis eQTL has a p-value higher than its p-value cutoff, ignore the result
 				continue
@@ -255,7 +274,7 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 			eqtls[snpId][geneSymbol]["gene_chr"] = gene_chr
 			eqtls[snpId][geneSymbol]["gene_start"] = gene_start
 			eqtls[snpId][geneSymbol]["gene_end"] = gene_end
-			eqtls[snpId][geneSymbol]["p_thresh"] = gene_stat[3]
+			eqtls[snpId][geneSymbol]["p_thresh"] = p_thresh
 			eqtls[snpId][geneSymbol]["tissues"] = {}
 			if cis:
 				eqtls[snpId][geneSymbol]["cis?"] = True
@@ -266,23 +285,25 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 def send_GTEx_query(reqList,gtexResponses):
 	print "\t\tSending request to GTEx API..."
 	try:
-		gtexResponses.append(requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList))
+		gtexResponses.append((reqList,requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList)))
 	except requests.exceptions.ConnectionError:
-		print "\t\tWarning: a connection error occurred with the GTEx service. Retrying..."
-		gtexResponses.append(requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList)) #Allow to crash if fails a second time
+		try:
+			print "\t\tWarning: a connection error occurred with the GTEx service. Retrying..."
+			gtexResponses.append((reqList,requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList))) #Allow to crash if fails a second time
+		except requests.exceptions.ConnectionError:
+			print "\t\tRetry failed. Continuing, but results will be incomplete."
+			gtexResponses.append((reqList,"Connection failure"))
+			return
 	print "\t\tResponse received."
 
-def produce_output(snps,interactions,eqtls,output_dir):
+def produce_output(snps,interactions,genes,eqtls,output_dir):
 	print "Producing output..."
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
 	summary_table = open(output_dir + "/summary_table.txt",'w')
 	summary_table.write("SNP\tchr\tpos\tnum_contacts\tcell_lines\tnum_genes\n")
 	for snp in snps.keys():
-		interaction_sum = 0
-		for cell_line in interactions[snp].keys():
-			interaction_sum += len(interactions[snp][cell_line])
-		summary_table.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + str(interaction_sum) + '\t')
+		summary_table.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + str(len(genes[snp])) + '\t')
 		for cell_line in interactions[snp].keys():
 			summary_table.write(cell_line + ',')
 		summary_table.write('\t' + str(len(eqtls[snp])) + '\n')
@@ -327,6 +348,6 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
-	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
+	genes = find_genes(snps,interactions,args.fragment_database_fp,args.gene_bed_fp)
 	eqtls = find_eqtls(snps,genes,args.eqtl_data_dir,args.gene_database_fp,args.local_databases_only,args.num_processes)
-	produce_output(snps,interactions,eqtls,args.output_dir)
+	produce_output(snps,interactions,genes,eqtls,args.output_dir)
