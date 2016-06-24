@@ -5,6 +5,7 @@ import sqlite3
 import pybedtools
 import requests
 import multiprocessing
+import pandas
 
 from sets import Set
 
@@ -151,8 +152,6 @@ def find_genes(snps,interactions,fragment_database_fp,gene_bed_fp):
 def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,num_processes):
 	print "Identifying eQTLs of interest..."
 	eqtls = {} #A mapping of SNPs to genes with which they have an eQTL relationship, which in turn maps to a list of tissues in which this eQTL occurs
-	for snp in genes.keys():
-		eqtls[snp] = {} #Stores eQTLs relevant to this SNP, and, for each eQTL, a list of the tissues in which it is found
 	gene_index_db = sqlite3.connect(gene_database_fp)
 	gene_index_db.text_factory = str
 	gene_index = gene_index_db.cursor()
@@ -166,26 +165,26 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 		for snp in genes.keys():
 			for gene in genes[snp]:
 				for eqtl in eqtl_index.execute("SELECT rsID, gene_symbol FROM eqtls WHERE rsID=? AND gene_symbol=?",(snp,gene)): #Pull down all eQTLs related to a given SNP to test for relevance:
-					gene_chr = None
-					gene_start = None
-					gene_end = None
-					p_thresh = None
+					if not eqtls.has_key(snp):
+						eqtls[snp] = {} #Stores eQTLs relevant to this SNP, and, for each eQTL, a list of the tissues in which it is found and the associated p-value with the eQTL in this tissue
 					if not eqtls[snp].has_key(gene):
-						try:
-							max_length = 0
-							for gene_stat in gene_index.execute("SELECT chr, start, end, p_thresh FROM genes WHERE symbol=?", [gene]):
-								if gene_stat[2] - gene_stat[1] > max_length: #Consider "canonical" to be the longest record where multiple records are present
-									if gene_stat[0].startswith("chr"):
-										gene_chr = gene_stat[0][gene_stat[0].find("chr")+3:]
-									else:
-										gene_chr = gene_stat[0]
-									gene_start = gene_stat[1]
-									gene_end = gene_stat[2]
-									p_thresh = gene_stat[3]
-									max_length = gene_stat[2] - gene_stat[1]
-						except TypeError:
-							print "Warning: No entry in gene database for " + geneSymbol
-							continue
+						gene_chr = "NA"
+						gene_start = "NA"
+						gene_end = "NA"
+						p_thresh = "NA"
+						max_length = 0
+						for gene_stat in gene_index.execute("SELECT chr, start, end, p_thresh FROM genes WHERE symbol=?", [gene]):
+							if gene_stat[2] - gene_stat[1] > max_length: #Consider "canonical" to be the longest record where multiple records are present
+								if gene_stat[0].startswith("chr"):
+									gene_chr = gene_stat[0][gene_stat[0].find("chr")+3:]
+								else:
+									gene_chr = gene_stat[0]
+								gene_start = gene_stat[1]
+								gene_end = gene_stat[2]
+								p_thresh = gene_stat[3]
+								max_length = gene_stat[2] - gene_stat[1]
+						if gene_chr == "NA":
+							print "\t\tWarning: no entry in gene database for " + gene
 						eqtls[snp][gene] = {}
 						eqtls[snp][gene]["gene_chr"] = gene_chr
 						eqtls[snp][gene]["gene_start"] = gene_start
@@ -202,7 +201,14 @@ def find_eqtls(snps,genes,eqtl_data_dir,gene_database_fp,local_databases_only,nu
 						p = eqtl_index.fetchone()[0]
 						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": p}
 					except sqlite3.OperationalError:
-						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": "NA"} #TODO
+						eqtls[snp][gene]["tissues"][tissue] = {"pvalue": "NA"}
+	if not eqtls.has_key(snp):
+		print "\t\tWarning: no eQTLs found in local databases for SNP " + snp
+		if local_databases_only:
+			print "\t\tRemoving SNP %s from analysis" % snp
+			del genes[snp]
+			del interactions[snp]
+			del snps[snp]
 	if not local_databases_only:
 		print "\tQuerying GTEx online database."
 		get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes)
@@ -217,8 +223,9 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 	reqLists = [[]]
 	for snp in genes.keys():
 		for gene in genes[snp]:
-			if not eqtls[snp].has_key(gene): #We aren't interested in eQTLs already discovered from local databases
-				for tissue in tissues:
+			for tissue in tissues:
+				#We aren't interested in eQTLs already discovered from local databases
+				if (not eqtls.has_key(snp) or (eqtls.has_key(snp) and not eqtls[snp].has_key(gene))) or (eqtls[snp].has_key(gene) and not eqtls[snp][gene]["tissues"].has_key(tissue)):
 					if len(reqLists[-1]) < 1000:
 						reqLists[-1].append({"snpId":snp,"gencodeId":gene,"tissueName":tissue})
 					else:
@@ -240,13 +247,18 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 			print "\t\tWarning: bad response."
 			error_log.write("ReqList: " + str(response[0]) + "\nResponse: " + str(response[1]) + "\n\n")
 	for result in results:
-		gene_chr = None
-		gene_start = None
-		gene_end = None
-		p_thresh = None
 		geneSymbol = result["geneSymbol"]
 		snpId = result["snpId"]
-		try:
+		if str(geneSymbol) == "gene not found":
+			continue
+		if not eqtls.has_key(snpId):
+			eqtls[snpId] = {}
+		if not eqtls[snpId].has_key(geneSymbol):
+			gene_chr = "NA"
+			gene_start = "NA"
+			gene_end = "NA"
+			p_thresh = "NA"
+			
 			max_length = 0
 			for gene_stat in gene_index.execute("SELECT chr, start, end, p_thresh FROM genes WHERE symbol=?", [geneSymbol]):
 				if gene_stat[2] - gene_stat[1] > max_length: #Consider "canonical" to be the longest record where multiple records are present
@@ -258,17 +270,10 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 					gene_end = gene_stat[2]
 					p_thresh = gene_stat[3]
 					max_length = gene_stat[2] - gene_stat[1]
-		except TypeError:
-			print "\t\tWarning: No entry in gene database for " + geneSymbol
-			continue
-		
-		cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_end + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
-		if result["pvalue"] != "NA":
-			if cis and float(result["pvalue"]) >= gene_stat[3]: #If a cis eQTL has a p-value higher than its p-value cutoff, ignore the result
-				continue
-		if not eqtls.has_key(snpId):
-			eqtls[snpId] = {}
-		if not eqtls[snpId].has_key(geneSymbol):
+			#if gene_chr == "NA":
+				#print "\t\tWarning: No entry in gene database for " + geneSymbol
+			cis = gene_chr == snps[snp][0] and (snps[snp][1] > gene_start - 1000000 and snps[snp][1] < gene_end + 1000000) #eQTL is cis if the SNP is within 1Mbp of the gene
+			
 			eqtls[snpId][geneSymbol] = {}
 			eqtls[snpId][geneSymbol]["ens_id"] = result["gencodeId"]
 			eqtls[snpId][geneSymbol]["gene_chr"] = gene_chr
@@ -280,7 +285,24 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,num_processes):
 				eqtls[snpId][geneSymbol]["cis?"] = True
 			else:
 				eqtls[snpId][geneSymbol]["cis?"] = False
+		#if str(snpId) == "rs12740374" and str(geneSymbol) == "SORT1":
+		#	print "\t\tComparing rs12740374-SORT1 p-value in %s to p-value threshold for rs12740374-SORT1: " % result["tissueId"]
+		#	print "\t\t\tCis?: " + str(eqtls["rs12740374"]["SORT1"]["cis?"])
+		#	print "Result p-value: %s, p-value cut-off: %s" % (str(result["pvalue"]),str(eqtls["rs12740374"]["SORT1"]["p_thresh"]))
+		#	print "P-value greater than cut-off?: " + str(float(result["pvalue"]) >= gene_stat[3])
+		if result["pvalue"] == "NA" or (eqtls[snpId][geneSymbol]["cis?"] and float(result["pvalue"]) >= eqtls[snpId][geneSymbol]["p_thresh"]): #If a cis eQTL has a p-value higher than its p-value cutoff, ignore the result
+			continue
 		eqtls[snpId][geneSymbol]["tissues"][result["tissueId"]] = {"pvalue": result["pvalue"]}
+	
+	snps_to_remove = []
+	for snp in snps:
+		if not eqtls.has_key(snp):
+			print "\t\tWarning: no eQTLs found for SNP %s, removing from analysis." % snp
+			del genes[snp]
+			del interactions[snp]
+			snps_to_remove.append(snp)
+	for snp in snps_to_remove:
+		del snps[snp]
 
 def send_GTEx_query(reqList,gtexResponses):
 	print "\t\tSending request to GTEx API..."
@@ -296,7 +318,28 @@ def send_GTEx_query(reqList,gtexResponses):
 			return
 	print "\t\tResponse received."
 
-def produce_output(snps,interactions,genes,eqtls,output_dir):
+def get_gene_expression_info(eqtls,expression_table_fp):
+	print "Getting gene expression information..."
+	gene_df = pandas.read_table(expression_table_fp,index_col='Symbol')
+	gene_exp = {}
+	for snp in eqtls.keys():
+		for gene in eqtls[snp].keys():
+			gene_exp[gene] = {}
+			try:
+				for tissue in list(gene_df.columns.values):
+					gene_exp[gene][tissue] = gene_df.at[gene,tissue]
+					gene_exp[gene]["max"] = gene_df.ix[gene].argmax()
+					gene_exp[gene]["min"] = gene_df.ix[gene].argmin()
+			except KeyError:
+				print "Warning: Gene expression data not found for " + gene
+				for tissue in list(gene_df.columns.values):
+					gene_exp[gene][tissue] = "NA"
+					gene_exp[gene]["max"] = "NA"
+					gene_exp[gene]["min"] = "NA"
+	return gene_exp
+
+def produce_output(snps,interactions,genes,eqtls,gene_exp,output_dir):
+	#TODO: Tidy up this method using pandas
 	print "Producing output..."
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
@@ -308,23 +351,34 @@ def produce_output(snps,interactions,genes,eqtls,output_dir):
 			summary_table.write(cell_line + ',')
 		summary_table.write('\t' + str(len(eqtls[snp])) + '\n')
 		#Write two separate summaries, cis SNP summary and trans SNP summary?
-		snp_summary = open(output_dir + '/' + snp + ".txt",'w')
-		snp_summary.write("gene_name\ttissue\tcis_p_threshold\tp-value\tchr\tstart_pos\tend_pos\tcis?\tdistance_from_snp\n")
-		for gene in eqtls[snp].keys():
-			distance_from_snp = 0
-			if(not snps[snp][0] == eqtls[snp][gene]["gene_chr"]):
-				distance_from_snp = None #Not applicable to trans interactions
-			elif(snps[snp][1] < eqtls[snp][gene]["gene_start"]):
-				distance_from_snp = eqtls[snp][gene]["gene_start"] - snps[snp][1]
-			elif(snps[snp][1] > eqtls[snp][gene]["gene_end"]):
-				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
-			eqtl_tissue = []
-			for tissue in eqtls[snp][gene]["tissues"].keys():
-				eqtl_tissue.append((eqtls[snp][gene]["tissues"][tissue]["pvalue"],gene,tissue,str(eqtls[snp][gene]["p_thresh"]),str(eqtls[snp][gene]["gene_chr"]),str(eqtls[snp][gene]["gene_start"]),str(eqtls[snp][gene]["gene_end"]),str(eqtls[snp][gene]["cis?"]),str(distance_from_snp)))
-			eqtl_tissue.sort() #Sort by p-value
-			for entry in eqtl_tissue:
-				snp_summary.write(entry[1] + '\t' + entry[2] + '\t' + entry[3] + '\t' + str(entry[0]) + '\t' + entry[4] + '\t' + entry[5] + '\t' + entry[6] + '\t' + entry[7] + '\t' + entry[8] + '\n')
-		snp_summary.close()
+		if len(eqtls[snp].keys()) > 0:
+			snp_summary = open(output_dir + '/' + snp + ".txt",'w')
+			snp_summary.write("snp\tsnp_chr\tsnp_locus\tgene_name\tgene_chr\tgene_start_pos\tgene_end_pos\ttissue\tp-value\tcis_p_threshold\tcis?\tdistance_from_snp\texp_level_in_tissue\tmax_exp_tissue\tmax_exp_level\tmin_exp_tissue\tmin_exp_level\n")
+			for gene in eqtls[snp].keys():
+				distance_from_snp = 0
+				if(not snps[snp][0] == eqtls[snp][gene]["gene_chr"]):
+					distance_from_snp = "NA" #Not applicable to trans interactions
+				elif(snps[snp][1] < eqtls[snp][gene]["gene_start"]):
+					distance_from_snp = eqtls[snp][gene]["gene_start"] - snps[snp][1]
+				elif(snps[snp][1] > eqtls[snp][gene]["gene_end"]):
+					distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
+				
+				gene_exp_max_tis = gene_exp[gene]["max"]
+				gene_exp_max_val = gene_exp[gene][gene_exp[gene]["max"]]
+				gene_exp_min_tis = gene_exp[gene]["min"]
+				gene_exp_min_val = gene_exp[gene][gene_exp[gene]["min"]]
+				eqtl_tissue = []
+				for tissue in eqtls[snp][gene]["tissues"].keys():
+					gene_exp_this_tissue = "NA"
+					try:
+						gene_exp_this_tissue = gene_exp[gene][tissue]
+					except KeyError:
+						print "\t\tWarning: No expression information for %s in %s" % (gene,tissue)
+					eqtl_tissue.append((eqtls[snp][gene]["tissues"][tissue]["pvalue"],str(eqtls[snp][gene]["gene_chr"]),str(eqtls[snp][gene]["gene_start"]),str(eqtls[snp][gene]["gene_end"]),tissue,str(eqtls[snp][gene]["p_thresh"]),str(eqtls[snp][gene]["cis?"]),str(distance_from_snp),str(gene_exp_this_tissue)))
+				eqtl_tissue.sort() #Sort by p-value
+				for entry in eqtl_tissue:
+					snp_summary.write(snp + '\t' + snps[snp][0] + '\t' + str(snps[snp][1]) + '\t' + gene + '\t' + entry[1] + '\t' + entry[2] + '\t' + entry[3] + '\t' + entry[4] + '\t' + str(entry[0]) + '\t' + entry[5] + '\t' + entry[6] + '\t' + entry[7] + '\t' + entry[8] + '\t' + gene_exp_max_tis + '\t' + str(gene_exp_max_val) + '\t' + gene_exp_min_tis + '\t' + str(gene_exp_min_val) + '\n')
+			snp_summary.close()
 	summary_table.close()
 
 
@@ -342,6 +396,7 @@ if __name__ == "__main__":
 	parser.add_argument("-g","--gene_bed_fp",default="hg19_genes.bed",help="Bed file detailing locations of genes in genome (the UCSC known gene list for hg19 by default).")
 	parser.add_argument("-a","--gene_database_fp",default="geneIndex.db",help="Database constructed from gene BED file.")
 	parser.add_argument("-e","--eqtl_data_dir",default="eQTLs",help="The directory containing databases of eQTL data from various tissues (the GTEx Analysis V6 by default).")
+	parser.add_argument("-r","--expression_table_fp",default="GTEx_Analysis_v6_RNA-seq_gene_median.txt",help="The tab-separated table containing expression information about GTEx genes (the GTEx Analysis V6 RNA-seq gene median by default).")
 	parser.add_argument("-o","--output_dir",default="hiCquery_output",help="The directory in which to output results (\"hiCquery_output\" by default).")
 	parser.add_argument("-l","--local_databases_only",action="store_true",default=False,help="Consider only local databases. Will only include cis-eQTLs if using downloadable GTEx dataset")
 	parser.add_argument("-p","--num_processes",type=int,default=1,help="Desired number of processes for multithreading (default: 1).")
@@ -350,4 +405,5 @@ if __name__ == "__main__":
 	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
 	genes = find_genes(snps,interactions,args.fragment_database_fp,args.gene_bed_fp)
 	eqtls = find_eqtls(snps,genes,args.eqtl_data_dir,args.gene_database_fp,args.local_databases_only,args.num_processes)
-	produce_output(snps,interactions,genes,eqtls,args.output_dir)
+	gene_exp = get_gene_expression_info(eqtls,args.expression_table_fp)
+	produce_output(snps,interactions,genes,eqtls,gene_exp,args.output_dir)
