@@ -9,7 +9,9 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from matplotlib import style
-
+from matplotlib.ticker import FuncFormatter
+from itertools import cycle
+import re
 from sets import Set
 
 def build_snp_index(snp_database_fp,snp_dir):
@@ -276,7 +278,7 @@ def send_GTEx_query(reqList,gtexResponses):
 		gtexResponses.append(requests.post("http://gtexportal.org/api/v6/dyneqtl?v=clversion", json=reqList)) #Allow to crash if fails a second time
 	print "\t\tResponse received."
 
-def produce_output(snps,interactions,eqtls,output_dir):
+def produce_output(snps,interactions,eqtls,snp_database_fp,output_dir,suppress_graphs):
 	print "Producing output..."
 	if not os.path.isdir(output_dir):
 		os.mkdir(output_dir)
@@ -292,39 +294,108 @@ def produce_output(snps,interactions,eqtls,output_dir):
 		summary_table.write('\t' + str(len(eqtls[snp])) + '\n')
 		#Write two separate summaries, cis SNP summary and trans SNP summary?
 		snp_summary = open(output_dir + '/' + snp + ".txt",'w')
-		snp_summary.write("gene_name\ttissue\tcis_p_threshold\tp-value\tchr\tstart_pos\tend_pos\tcis?\tdistance_from_snp\n")
+		snp_summary.write("dbSNP_ID\tgene_name\ttissue\tcis_p_threshold\tp-value\tchr\tstart_pos\tend_pos\tsignificant_cis_interaction\tdistance_from_snp\n")
 		for gene in eqtls[snp].keys():
 			distance_from_snp = 0
 			if(not snps[snp][0] == eqtls[snp][gene]["gene_chr"]):
-				distance_from_snp = None #Not applicable to trans interactions
+				distance_from_snp = "NA" #Not applicable to trans interactions
 			elif(snps[snp][1] < eqtls[snp][gene]["gene_start"]):
 				distance_from_snp = eqtls[snp][gene]["gene_start"] - snps[snp][1]
 			elif(snps[snp][1] > eqtls[snp][gene]["gene_end"]):
 				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
 			eqtl_tissue = []
 			for tissue in eqtls[snp][gene]["tissues"].keys():
-				eqtl_tissue.append((eqtls[snp][gene]["tissues"][tissue]["pvalue"],gene,tissue,str(eqtls[snp][gene]["p_thresh"]),str(eqtls[snp][gene]["gene_chr"]),str(eqtls[snp][gene]["gene_start"]),str(eqtls[snp][gene]["gene_end"]),str(eqtls[snp][gene]["cis?"]),str(distance_from_snp)))
+				eqtl_tissue.append((eqtls[snp][gene]["tissues"][tissue]["pvalue"],snp,gene,tissue,str(eqtls[snp][gene]["p_thresh"]),str(eqtls[snp][gene]["gene_chr"]),str(eqtls[snp][gene]["gene_start"]),str(eqtls[snp][gene]["gene_end"]),str(eqtls[snp][gene]["cis?"]),str(distance_from_snp)))
 			eqtl_tissue.sort() #Sort by p-value
 			for entry in eqtl_tissue:
-				snp_summary.write(entry[1] + '\t' + entry[2] + '\t' + entry[3] + '\t' + str(entry[0]) + '\t' + entry[4] + '\t' + entry[5] + '\t' + entry[6] + '\t' + entry[7] + '\t' + entry[8] + '\n')
+				snp_summary.write(entry[1] + '\t' + entry[2] + '\t' + entry[3] + '\t' + str(entry[0]) + '\t' + entry[4] + '\t' + entry[5] + '\t' + entry[6] + '\t' + entry[7] + '\t' + entry[8] + '\t' + entry[9] + '\n')
 		snp_summary.close()
 	summary_table.close()
+	if not suppress_graphs:
+		produce_graphs(snps,genes,eqtls,snp_database_fp,output_dir)
 
-def produce_graphs(snps,interactions,eqtls,output_dir):
-	chr_loc_snp = invert_snp_index(snps)
+def produce_graphs(snps,genes,eqtls,snp_database_fp,output_dir):
+	print "\tProducing graphs"
+	style.use("ggplot")
+	if not os.path.isdir(output_dir + "/plots"):
+		os.mkdir(output_dir + "/plots")
+	int_colours = "rgb"
+	eqtl_colours = "myc"
+	int_colours = cycle(int_colours)
+	eqtl_colours = cycle(eqtl_colours)
+	snps_by_chr = {}
+	for snp, info in snps.items():
+		chrm = info[0]
+		if not snps_by_chr.has_key(chrm):
+			snps_by_chr[chrm] = []
+		snps_by_chr[chrm].append((info[1],snp))
 	
+	int_colour_list = []
+	eqtl_colour_list = []
+	num_snpgenes = []
+	num_eqtls = []
+	rsIDs = []
+	
+	chrs = snps_by_chr.keys()
+	chrs.sort(key=natural_keys) #So that the chromosomes are in a logical order on the graph
+	chr_locs = []
+	chr_ticks = []
+	chrm_pos = 0
+	last_count = 0
+	count = 0
+	
+	print "\t\tChromosomes present:"
+	for chrm in chrs:
+		snp_list = snps_by_chr[chrm]
+		snp_list.sort() #Sort by locus
+		int_colour = int_colours.next()
+		eqtl_colour = eqtl_colours.next()
+		chr_locs.append(chrm_pos)
+		chr_ticks.append(chrm)
+		for snp in snp_list:
+			num_snpgenes.append(len(genes[snp[1]]))
+			num_eqtls.append(len(eqtls[snp[1]]) * -1)
+			rsIDs.append(snp[1])
+			int_colour_list.append(int_colour)
+			eqtl_colour_list.append(eqtl_colour)
+			count += 1
+		chrm_pos = chrm_pos + count
+		print "\t\t" + chrm + " (" + str(count) + " SNPs)"
+		count = 0
+	
+	print "\t\tChromosome locations:"
+	for i,_ in enumerate(chr_locs):
+		print "\t\t" + str(chr_locs[i]) + ": " + chr_ticks[i]
+	
+	plt.clf()
+	plt.bar(range(len(num_snpgenes)),num_snpgenes,color=int_colour_list)
+	plt.bar(range(len(num_eqtls)),num_eqtls,color=eqtl_colour_list)
+	axes = plt.gca()
+	axes.yaxis.set_major_formatter(FuncFormatter(abs_value_ticks)) #So that eQTL values won't appear negative on plot
+	plt.vlines(chr_locs,axes.get_ylim()[0],axes.get_ylim()[1],colors="k")
+	axes.set_xticks(range(len(rsIDs)))
+	axes.set_xticklabels(rsIDs,rotation='vertical')
+	ax2 = axes.twiny()
+	ax2.set_xlim(axes.get_xlim())
+	ax2.set_xticks(chr_locs)
+	ax2.set_xticklabels(chr_ticks)
+	plt.tight_layout()
+	plt.savefig(output_dir + "/plots/snpgene_and_eqtl_overview.png",dpi=300,format="png")
+	plt.clf()
 
-def invert_snp_index(snps):
-	chr_loc_snp = {}
-	for snp in snps.keys():
-		if not chr_loc_snp.has_key(snps[snp][0]):
-			chr_loc_snp[snps[snp][0]] = {}
-		chr_loc_snp[snps[snp][0]] = {snps[snp][1] : snp}
-	for chr in chr_loc_snp.keys:
-		#Get end coordinate of chromosome
-		#Create arrays with entries for each of the coordinates
-		#For keys in chr_loc_snp[chr]
-			#Do the thing
+def atoi(text):
+    return int(text) if text.isdigit() else text
+
+def natural_keys(text):
+    '''
+    alist.sort(key=natural_keys) sorts in human order
+    http://nedbatchelder.com/blog/200712/human_sorting.html
+    (See Toothy's implementation in the comments)
+    '''
+    return [ atoi(c) for c in re.split('(\d+)', text) ]
+
+def abs_value_ticks(x, pos):
+	return abs(x)
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="")
@@ -343,9 +414,10 @@ if __name__ == "__main__":
 	parser.add_argument("-o","--output_dir",default="hiCquery_output",help="The directory in which to output results (\"hiCquery_output\" by default).")
 	parser.add_argument("-l","--local_databases_only",action="store_true",default=False,help="Consider only local databases. Will only include cis-eQTLs if using downloadable GTEx dataset")
 	parser.add_argument("-p","--num_processes",type=int,default=1,help="Desired number of processes for multithreading (default: 1).")
+	parser.add_argument("-r","--suppress_graphs",action="store_true",default=False,help="Suppress graph output (default: False).")
 	args = parser.parse_args()
 	snps = process_inputs(args.inputs,args.snp_database_fp,args.snp_dir)
 	interactions = find_interactions(snps,args.fragment_database_fp,args.hic_data_dir,args.distance,args.include_cell_lines,args.exclude_cell_lines)
 	genes = find_genes(interactions,args.fragment_database_fp,args.gene_bed_fp)
 	eqtls = find_eqtls(snps,genes,args.eqtl_data_dir,args.gene_database_fp,args.local_databases_only,args.num_processes)
-	produce_output(snps,interactions,eqtls,args.output_dir)
+	produce_output(snps,interactions,eqtls,args.snp_database_fp,args.output_dir,args.suppress_graphs)
