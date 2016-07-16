@@ -272,8 +272,8 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,p_values,num_processes):
 	for response in gtexResponses:
 		try:
 			results += response[1].json()["result"]
-		except simplejson.scanner.JSONDecodeError:
-			print "\t\tWarning: bad response."
+		except Exception as e:
+			print "\t\tWarning: bad response. Exception: %s" % e
 			error_log.write("ReqList: " + str(response[0]) + "\nResponse: " + str(response[1]) + "\n\n")
 	for result in results:
 		geneSymbol = result["geneSymbol"]
@@ -345,8 +345,12 @@ def get_gene_expression_info(eqtls,expression_table_fp):
 			try:
 				for tissue in list(gene_df.columns.values):
 					gene_exp[gene][tissue] = gene_df.at[gene,tissue]
-					gene_exp[gene]["max"] = gene_df.ix[gene].argmax()
-					gene_exp[gene]["min"] = gene_df.ix[gene].argmin()
+					gene_exp[gene]["max"] = gene_df.ix[gene].idxmax()
+					if not isinstance(gene_exp[gene]["max"], str):
+						gene_exp[gene]["max"] = gene_df.ix[gene].max().idxmax()
+					gene_exp[gene]["min"] = gene_df.ix[gene].idxmin()
+					if not isinstance(gene_exp[gene]["min"], str):
+						gene_exp[gene]["min"] = gene_df.ix[gene].min().idxmin()
 			except KeyError:
 				print "Warning: Gene expression data not found for " + gene
 				for tissue in list(gene_df.columns.values):
@@ -380,9 +384,9 @@ def produce_output(snps,interactions,genes,eqtls,gene_exp,output_dir):
 				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
 			
 			gene_exp_max_tis = gene_exp[gene]["max"]
-			gene_exp_max_val = gene_exp[gene][gene_exp[gene]["max"]]
+			gene_exp_max_val = gene_exp[gene][gene_exp_max_tis]
 			gene_exp_min_tis = gene_exp[gene]["min"]
-			gene_exp_min_val = gene_exp[gene][gene_exp[gene]["min"]]
+			gene_exp_min_val = gene_exp[gene][gene_exp_min_tis]
 			eqtl_tissue = []
 			for tissue in eqtls[snp][gene]["tissues"].keys():
 				gene_exp_this_tissue = "NA"
