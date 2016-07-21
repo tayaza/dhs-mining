@@ -1,2 +1,2 @@
 # dhs-mining
-Querrying databases for gene rugulatory elements
+Querrying databases for gene regulatory elements
