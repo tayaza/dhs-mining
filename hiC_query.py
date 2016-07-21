@@ -278,7 +278,7 @@ def get_GTEx_response(snps,genes,gene_database_fp,eqtls,p_values,num_processes):
 	for result in results:
 		geneSymbol = result["geneSymbol"]
 		snpId = result["snpId"]
-		if str(geneSymbol) == "gene not found":
+		if str(geneSymbol) == "gene not found" or not snps.has_key(snpId):
 			continue
 		num_tests += 1
 		if not eqtls.has_key(snpId):
@@ -346,7 +346,7 @@ def get_gene_expression_info(eqtls,expression_table_fp):
 				for tissue in list(gene_df.columns.values):
 					gene_exp[gene][tissue] = gene_df.at[gene,tissue]
 					gene_exp[gene]["max"] = gene_df.ix[gene].idxmax()
-					if not isinstance(gene_exp[gene]["max"], str):
+					if not isinstance(gene_exp[gene]["max"], str): #If the column header for max expression is not a string, the gene has multiple entries in the gene expression table
 						gene_exp[gene]["max"] = gene_df.ix[gene].max().idxmax()
 					gene_exp[gene]["min"] = gene_df.ix[gene].idxmin()
 					if not isinstance(gene_exp[gene]["min"], str):
