@@ -25,5 +25,9 @@ To query the HiC table against the eQTL databases using one of the supplied test
 		./hiC_query.py -i <any combination of [rs001 rs002 rs003 rs004 rs005 rs006 rs007 rs008 rs009 rs010 rs011 rs012 rs013 rs014 rs015 rs016 rs017 rs018 rs019 rs020 rs021 rs022 rs023 rs024 rs025]> -t test_snps -c test_hic_data -e test_eQTLs
 =======
 # dhs-mining
+<<<<<<< HEAD
 Querrying databases for gene rugulatory elements
 >>>>>>> afb69085ab05765a4e22f53090c9b54cee9d9fad
+=======
+Querrying databases for gene regulatory elements
+>>>>>>> 606fbb38d319cabd133493016e63b35bd3375558
