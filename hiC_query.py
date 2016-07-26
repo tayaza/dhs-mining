@@ -384,9 +384,15 @@ def produce_output(snps,interactions,genes,eqtls,gene_exp,output_dir):
 				distance_from_snp = snps[snp][1] - eqtls[snp][gene]["gene_end"]
 			
 			gene_exp_max_tis = gene_exp[gene]["max"]
-			gene_exp_max_val = gene_exp[gene][gene_exp_max_tis]
+			if gene_exp_max_tis == "NA":
+				gene_exp_max_val = "NA"
+			else:
+				gene_exp_max_val = gene_exp[gene][gene_exp_max_tis]
 			gene_exp_min_tis = gene_exp[gene]["min"]
-			gene_exp_min_val = gene_exp[gene][gene_exp_min_tis]
+			if gene_exp_min_tis == "NA":
+				gene_exp_min_val = "NA"
+			else:
+				gene_exp_min_val = gene_exp[gene][gene_exp_min_tis]
 			eqtl_tissue = []
 			for tissue in eqtls[snp][gene]["tissues"].keys():
 				gene_exp_this_tissue = "NA"
