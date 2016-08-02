@@ -1,0 +1,1 @@
+dhs-mining gives epigenetic information for SNPs-eQTL pairs from the hiC-query query (https://git.com/alcamerone/hiC_query).
