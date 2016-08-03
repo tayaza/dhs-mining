@@ -193,6 +193,8 @@ def create_dhs112TB(dhs_file):
         data = [row for row in csv.reader(cfile.read().splitlines())]
     for row in data:
         row = row[0].split()
+        
+        #NOTE: dhs_id is (row_id-1)
         cur.executemany("INSERT INTO dhs112 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);", (row,))
     conn.commit()
     conn.close()
@@ -216,6 +218,27 @@ def create_exp112TB(exp_file):
     conn.commit()
     conn.close()
 
+def create_dhsClusterTB(dhsCluster_file):
+    conn = sqlite3.connect('dhs.db')
+    conn.text_factory = str
+    cur = conn.cursor()
+
+    print("\t\t Creating DHS-to-Cluster table...")
+
+    cur.execute("DROP TABLE IF EXISTS dhsCluster")
+    cur.execute("CREATE TABLE dhsCluster ('chr' TEXT, 'start' INTEGER, 'end' INTEGER, 'original_cluster' INTEGER, 'refined_cluster' INTEGER, 'original_distance' REAL, 'refined_distance' REAL)")
+
+    with open(dhsCluster_file, 'rb') as cfile:
+        data = [row for row in csv.reader(cfile.read().splitlines())]
+    for row in data:
+        row = row[0].split()
+        
+        #NOTE: dhs_id is (rowID-1)
+        cur.executemany("INSERT INTO dhsCluster VALUES (?,?,?,?,?,?,?);", (row,))
+    conn.commit()
+    conn.close()
+
+    
 
 
 
@@ -233,9 +256,11 @@ def create_dhsDB():
     create_dhsPredictorsTB(dhsPredictors_input)
     create_dhs112TB(dhs112_input)
     create_exp112TB(exp112_input)
+    create_dhsClusterTB(dhsCluster_input)
 
 
 #------------------------------ END OF DATABASE POPULATION -------------------------------------------
+
 if __name__ == "__main__":
     correlation_input = '../dhs_data/allGeneCorrelations100000.p05_v3.txt'
     overlap_input = '../dhs_data/TableS05-overlapSummary.txt'
@@ -248,6 +273,7 @@ if __name__ == "__main__":
     dhsPredictors_input = '../dhs_data/TableS07-dhsPredictors_v2.bed' 
     dhs112_input = '../dhs_data/dhs112_v3.bed'
     exp112_input = '../dhs_data/exp112.bed'
+    dhsCluster_input = '../dhs_data/TableS03-dhs-to-cluster.txt'
 
     create_dhsDB()
     
