@@ -1,277 +1,334 @@
-#usr/bin/env python
-import sys, sqlite3, csv
+#!usr/bin/env python
+import sys, sqlite3, csv, os, argparse
 
-
-
-
-def prep_gene_list(gene_file):
-    gene_list = []
-    with open(gene_file, 'rb') as infile:
-        reader = csv.reader(infile, delimiter = " ")
-        for row in reader:
-            gene = row[0].split()[0]
-            if gene not in gene_list:
-                gene_list.append(gene)
-    return gene_list
     
 
+def prep_input(input_fp):
+    snp_eqtls = []
+    if os.path.isfile(input_fp):
+
+        with open(input_fp, 'rb') as infile:
+            for line in infile:
+                line = line.strip().split()
+                row = line[0:7]
+                if row not in snp_eqtls:
+                    snp_eqtls.append(row)
+    return snp_eqtls
 
 
-def create_corrTB(corr_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS gene_correlations_p05")
-    corr_cur.execute("CREATE TABLE gene_correlations_p05 (dhs_chr TEXT, dhs_start INTEGER, dhs_stop INTEGER,dhs_id INTEGER, gene_chr TEXT, gene_start INTEGER, gene_stop INTEGER, gene_name TEXT, metaprobeset_id REAL, ensemblID TEXT, cor REAL, pval REAL )" )
-
-    with open(corr_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO gene_correlations_p05 VALUES (?,?,?,?,?,?,?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
 
 
-def create_overlapTB(overlap_file):
-    conn = sqlite3.connect('dhs.db')
-    conn.text_factory = str
+
+def get_openCellTypes(cluster_id, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory =str
     cur = conn.cursor()
+    cellTypes = []
+    
+    output = [cluster_id, 'NA', 'NA', 'NA']
+    if isinstance(cluster_id, int):
+        cur.execute("SELECT * FROM openCellTypes WHERE cluster_id = ?;", (cluster_id,))
+        data = cur.fetchone()
+        if isinstance(data, tuple):
+            cellTypes =data
+        else:
+            cellTypes =output
+    else:
+        cellTypes =output
+ 
+    return cellTypes
+    cur.close()
+    conn.close()
+ 
 
-    cur.execute("DROP TABLE IF EXISTS overlap")
-    cur.execute("CREATE TABLE overlap (clusterID integer,cpg INTEGER,promoter INTEGER,phastVert)" )
+def get_openSamples(cluster_id, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory =str
+    cur = conn.cursor()
+    openSamples = []
+    #print "\t\t Gathering info on the open cell types and tissues in which the SNPs are found..."
 
-    with open(overlap_file, 'rb') as infile:
-        data = [row for row in csv.reader(infile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        cur.executemany("INSERT INTO overlap VALUES (?,?,?,?);", (row,))
-    conn.commit()
+    output = [cluster_id, 'NA', 'NA', 'NA','NA', 'NA', 'NA', 'NA','NA', 'NA', 'NA', 'NA']
+    if isinstance(cluster_id, int):
+        cur.execute("SELECT * FROM openSamples WHERE cluster_id = ?;", (cluster_id,))
+        data = cur.fetchone()
+        if isinstance(data, tuple):
+            openSamples = data
+        else:
+            openSamples = output
+    else:
+        openSamples = output
+ 
+    return openSamples
+    cur.close()
+    conn.close()
+ 
+def get_overlaps(cluster_id, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory =str
+    cur = conn.cursor()
+    overlaps = []
+    #print "\t\t Verifying if SNP lies in a CpG or promoter region... "
+
+    output = [cluster_id, 'NA', 'NA', 'NA', 'NA']
+    if (cluster_id != 'NA'):
+        cur.execute("SELECT * FROM overlap WHERE cluster_id = ?;", (cluster_id,))
+        data = cur.fetchone()
+        if isinstance(data, tuple):
+            overlaps=data
+        else:
+            overlaps = output
+    else:
+        overlaps = output
+
+    return overlaps
+
+    cur.close()
     conn.close()
 
 
-def create_concordanceTB(concordance_file):
-    conn = sqlite3.connect('dhs.db')
-    conn.text_factory = str
+def get_motifs(cluster_id, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory =str
     cur = conn.cursor()
+    motifs = []
+    #print "\t\t Verifying if SNP lies in motif..."
 
-    cur.execute("DROP TABLE IF EXISTS concordance")
-    cur.execute("CREATE TABLE concordance (canonical TEXT,celltype TEXT,tissue TEXT,malignant TEXT, sex TEXT, description TEXT)" )
+    # TODO: Modify to retrieve all significant (e < 10-6) TFs?
 
-    with open(concordance_file, 'rb') as infile:
-        data = [row for row in csv.reader(infile.read().splitlines())]
+    if isinstance(cluster_id, int):
+        cur.execute("SELECT * FROM motifJaspar WHERE cluster_id = ?;", (cluster_id,))
+        data = cur.fetchall()
+        tf_list = []
+        if len(data) is 0:
+            tf_list = 'NA'
+        else:
+            for row in data:
+                tf_list.append((row[4], row[5]))
+        motifs = [cluster_id,tf_list]
+                
+    else:
+        motifs = [cluster_id, 'NA']
+    
 
-    for row in data:
-        print i, row[5]
-        cur.executemany("INSERT INTO concordance VALUES (?,?,?,?,?,?);", (row,))
-    conn.commit()
+    return motifs
+    
+    cur.close()
     conn.close()
 
-
-def create_openCellTypesTB(openCellTypes_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS openCellTypes")
-    corr_cur.execute("CREATE TABLE openCellTypes (clusterID INTEGER,openSample TEXT, opoenCellType TEXT, openTissue TEXT)" )
-
-    with open(openCellTypes_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO openCellTypes VALUES (?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-
-#TODO Learn how to work with BED files
-def create_dhsPredictorsTB(dhsPredictors_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS dhsPredictors")
-    corr_cur.execute("CREATE TABLE dhsPredictors (chr TEXT, start INTEGER, stop INTEGER, dhs_id INTEGER, cluster_id INTEGER, tissue TEXT)" )
-
-    with open(dhsPredictors_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO dhsPredictors VALUES (?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-
-def create_openSamplesTB(openSamples_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS openSamples")
-    corr_cur.execute("CREATE TABLE openSamples (clusterID INTEGER, dhs_count INTEGER, chr TEXT,  start INTEGER, stop INTEGER, dhs_id INTEGER, openSampleCount INTEGER, openCelltypeCount INTEGER, openTissueCount INTEGER, maxSample TEXT, maxCellType TEXT, maxTissue TEXT)" )
-
-    with open(openSamples_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO openSamples VALUES (?,?,?,?,?,?,?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-def create_motifJasparTB(motifJaspar_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS motifJaspar")
-    corr_cur.execute("CREATE TABLE motifJaspar (clusterID INTEGER, iMotif INTEGER, siteCount INTEGER,  eDiscovery REAL, TF TEXT, eMatch REAL,database TEXT)" )
-
-    with open(motifJaspar_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO motifJaspar VALUES (?,?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-
-
-def create_malignantTissuesTB(malignantTissues_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS malignantTissues")
-    corr_cur.execute("CREATE TABLE malignantTissues (canonical TEXT,isMalig TEXT, trueTissue TEXT, myGuess TEXT,isCorrect TEXT,brain REAL, endothelial REAL, epithelial REAL, fibroblast REAL, hematopoietic REAL, muscle REAL, stem REAL)" )
-
-    with open(malignantTissues_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    i=0
-    for row in data:
-        row = row[0].split()
-        #i = i+1
-        #print i, row[11]
-        corr_cur.executemany("INSERT INTO malignantTissues VALUES (?,?,?,?,?,?,?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-
-
-def create_sexTB(sex_file):
-    corr_conn = sqlite3.connect('dhs.db')
-    corr_conn.text_factory = str
-    corr_cur = corr_conn.cursor()
-
-    corr_cur.execute("DROP TABLE IF EXISTS sex")
-    corr_cur.execute("CREATE TABLE sex (canonical TEXT,tissue TEXT, trueSex TEXT, myGuess TEXT,isCorrect TEXT,F REAL, M REAL)" )
-
-    with open(sex_file, 'rb') as cfile:
-        data = [row for row in csv.reader(cfile.read().splitlines())]
-    for row in data:
-        row = row[0].split()
-        corr_cur.executemany("INSERT INTO sex VALUES (?,?,?,?,?,?,?);", (row,))
-    corr_conn.commit()
-    corr_conn.close()
-
-### END OF DATABASE PROCESSING
-
-###
-dhsPredictors = 'dhs_data/TableS07-dhsPredictors_v2.bed' 
-
-def create_dhsPredTB(dhsPredictors):
-    content = []
-    with open(dhsPredictors, 'rb') as f:
-        for line in f:
-            content.append(line.strip().split())
-        return content
-
-dhsPred = create_dhsPredTB(dhsPredictors)
-#for row in dhsPred:
-#    print row
-####
-
-def get_dhs(genes):
-    conn = sqlite3.connect('dhs.db')
+def get_sampleDHS_signal(dhs_id, dhsDB):
+    
+    conn = sqlite3.connect(dhsDB)
     conn.text_factory = str
     cur = conn.cursor()
+    sig_Samples = []
+    head = []
+
+    #print ("\t\t Scanning for cell types with significant DHS signals...")
+
+    if not isinstance(dhs_id, int):
+        sig_Samples = [dhs_id, ['NA']]
+            
+    else:
+        cur.execute("SELECT * FROM dhs112 WHERE rowid =?;", (dhs_id+1,))
+        dhs_signal = cur.fetchone()
+        head = [description[0] for description in cur.description]
+        sig_dhs =[]
+           
+        for i in xrange(3, len(dhs_signal)):
+            if (dhs_signal[i] >= 0.1):
+                sig_dhs.append((head[i],dhs_signal[i]))
+            i = i+1
+        if len(sig_dhs) is 0:
+            sig_Samples = [dhs_id, ['NA']]
+        else:
+            sig_Samples = [dhs_id, sig_dhs]
+           
+    return sig_Samples
     
+
+
+def get_snpDHS(snp, snp_chr, snp_pos, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory =str
+    cur = conn.cursor()
+    dhs_data = []
+
+    
+    snp_chr = "chr"+snp_chr
+
+    cur.execute("SELECT rowid, chr, start, end FROM dhs112 WHERE chr = ? AND start <=?  AND end >=?;",(snp_chr,snp_pos, snp_pos))
+    data = cur.fetchone()
+    if (data == None):
+        dhs_data = [snp, snp_chr, snp_pos, 'NA', 'NA', 'NA']
+        #dhs_data.append(to_data)
+                
+    else:
+        dhs_data = [snp, snp_chr, snp_pos, data[0]-1, data[2], data[3]]
+        #dhs_data.append(to_data)
+
+    
+    dhs_id = dhs_data[3]
+    if isinstance(dhs_id, int):
+        cur.execute("SELECT chr, start, end, refined_cluster FROM dhsCluster LIMIT 1 OFFSET "+ str(dhs_id-1)+";")
+        data = cur.fetchone()
+        dhs_data.append(data[3])
+
+        #print dhs_data[i]
+    else:
+        dhs_data.append('NA')
+
+
+    cluster_id = dhs_data[6]
+    
+    open_Samples = get_openSamples(cluster_id, dhsDB)
+    overlaps = get_overlaps(cluster_id, dhsDB)
+    motifs = get_motifs(cluster_id, dhsDB)
+    sig_dhsSamples = get_sampleDHS_signal(dhs_id, dhsDB)
+    
+    snp_dhs = (snp, snp_chr, snp_pos, dhs_id, dhs_data[4], dhs_data[5], sig_dhsSamples[1], cluster_id, overlaps[1], overlaps[2], overlaps[3], motifs[1], open_Samples[1], open_Samples[6], open_Samples[7], open_Samples[8], open_Samples[9], open_Samples[10], open_Samples[11])
+
+    return snp_dhs
+    
+
+    cur.close()
+    conn.close()
+
+def get_geneDHS(gene, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory = str
+    cur = conn.cursor()
+    gene_dhs = []
+    dhs_data = []
+    open_Samples = []
+    overlaps = []
+    motifs = []
+    sig_dhsSamples = []
+    
+    print("\t\t Finding DHSs in "+gene)
+    cur.execute("SELECT gene_name, dhs_id, dhs_start, dhs_end, pval from gene_correlations_p05 WHERE pval >= 0.95 AND gene_name = ?;", (gene,))
+    
+    cor_query = cur.fetchall()
+    if cor_query is None:
+        dhs_data.append((gene, 'NA', 'NA', 'NA', 'NA', 'NA'))
+    else:
+        for item in cor_query:
+            dhs_id = item[1]
+            dhs_start = int(item[2])
+            dhs_end = int(item[3])
+            pval = 1-item[4]
+            cluster_id = 0
+
+            cur.execute("SELECT chr, start, end, refined_cluster FROM dhsCluster LIMIT 1 OFFSET "+ str(dhs_id-1)+";")
+            cluster_query = cur.fetchone()
+            if cluster_query is None:
+                #cluster_id = 'NA'
+                dhs_data.append((gene, dhs_id, dhs_start, dhs_end, pval,'NA'))
+            else:
+                #cluster_id = cluster_query[3]
+                dhs_data.append((gene, dhs_id, dhs_start, dhs_end, pval, cluster_query[3]))
+            
+    for dhs in dhs_data:
+        cluster_id = dhs[5]
+        dhsID = dhs[1]
+        open_Samples = get_openSamples(cluster_id, dhsDB)
+        overlaps = get_overlaps(cluster_id, dhsDB)
+        motifs = get_motifs(cluster_id, dhsDB)
+        sig_dhsSamples = get_sampleDHS_signal(dhsID, dhsDB)
+
+
+        output = (dhs[0], dhs[1], dhs[2], dhs[3], dhs[4], sig_dhsSamples[1], dhs[5], overlaps[1], overlaps[2], overlaps[3], motifs[1], open_Samples[1], open_Samples[6], open_Samples[7], open_Samples[8], open_Samples[9], open_Samples[10],open_Samples[11]) 
+        gene_dhs.append(output)
+    return gene_dhs
+
+
+def get_SNPGeneDHS(snp_eqtls, dhsDB):
+    conn = sqlite3.connect(dhsDB)
+    conn.text_factory = str
+    cur = conn.cursor()
+     
     gene_cor = []
     open_samples = []
     dhs_result = []
+    snps_done =[]
+    snps_dhs_data = []
+    genes_done = []
+    detail_Header = False
+
+    with open(output_dir+"dhs_summary.txt", 'wb') as summary_file:
+        summary = csv.writer(summary_file, delimiter = '\t')
+        summary.writerow(['SNP', 'SNP_CHR', 'SNP_POS', 'SNP_DHS_ID', 'SNP_DHS_SIGNALS', 'SNP_CLUSTER_ID', 'SNP_TFs', 'SNP_MAX_TISSUE', 'GENE', 'GENE_CHR', 'GENE_START', 'GENE_END', 'GENE_DHS_ID', 'GENE_DHS_START', 'GENE_DHS_END', 'DHS_PVAL', 'GENE_DHS_SIGNALS', 'GENE_CLUSTER_ID', 'GENE_CLUSTER_TFs', 'MAX_CELLTYPE', 'MAX_TISSUE' ] )
+        for row in xrange(1,len(snp_eqtls)):
+            snp = snp_eqtls[row][0]
+            snp_chr = snp_eqtls[row][1]
+            snp_pos = snp_eqtls[row][2]
+            gene = snp_eqtls[row][3]
+            gene_chr = snp_eqtls[row][4]
+            gene_start = snp_eqtls[row][5]
+            gene_end = snp_eqtls[row][6]
+            genes_data = []
+        
+            if snp not in snps_done:
+                print ("\t Checking if "+snp+" lies in a DHS")
+                snp_dhs = get_snpDHS(snp, snp_chr, snp_pos, dhsDB)
+                snps_dhs_data.append(snp_dhs)
+                snps_done.append(snp)
+                if gene not in genes_done:
+                    gene_dhs = get_geneDHS(gene, dhsDB)
+                    genes_data.append(gene_dhs)
+                    genes_done.append(gene)
+
+            else:
+                if gene not in genes_done:
+                    gene_dhs = get_geneDHS(gene, dhsDB)
+                    genes_data.append(gene_dhs)
+                    genes_done.append(gene)
+            for gene_rows in genes_data:
+                for  dhs in gene_rows:
+                    summary.writerow([snp, snp_chr, snp_pos, snp_dhs[3], snp_dhs[6], snp_dhs[7], snp_dhs[11], snp_dhs[18], dhs[0], gene_chr, gene_start, gene_end, dhs[1], dhs[2], dhs[3], dhs[4], dhs[5], dhs[6], dhs[10], dhs[16], dhs[17]])
+                    
+                    
+                    with open(output_dir+"/dhs_details.txt", 'a') as detail_file:
+                        detail = csv.writer(detail_file, delimiter = '\t')
+                        if detail_Header == False:
+                            detail_file.seek(0)
+                            detail_file.truncate() 
+                            detail_Head =['SNP', 'SNP_CHR', 'SNP_POS', 'SNP_DHS_ID', 'SNP_DHS_START', 'SNP_DHS_END', 'SNP_DHS_SIGNALS', 'SNP_CLUSTER_ID', 'SNP_CpG%', 'SNP_PROMOTER%', 'SNP_CONSERVED%', 'SNP_CLUSTER_TFs', 'SNP_CLUSTER_DHS_COUNT', 'SNP_OPEN_SAMPLE_COUNT', 'SNP_OPEN_CELLTYPE_COUNT', 'SNP_OPEN_TISSUE_COUNT', 'SNP_MAX_SAMPLE', 'SNP_MAX_CELLTYPE',  'SNP_MAX_TISSUE', 'GENE', 'GENE_CHR', 'GENE_START', 'GENE_END', 'GENE_DHS_ID', 'GENE_DHS_START', 'GENE_DHS_END', 'DHS_PVAL', 'GENE_DHS_SIGNALS', 'GENE_CLUSTER_ID','GENE_CpG%', 'GENE_PROMOTER%', 'GENE_CONSERVED%', 'GENE_CLUSTER_TFs', 'GENE_CLUSTER_DHS_COUNT', 'GENE_OPEN_SAMPLE_COUNT', 'GENE_OPEN_CELLTYPE_COUNT', 'GENE_OPEN_TISSUE_COUNT', 'GENE_MAX_SAMPLE', 'GENE_MAX_CELLTYPE',  'GENE_MAX_TISSUE' ] 
+                            detail.writerow(detail_Head)
+                            detail_Header = True
+                        detail.writerow([snp, snp_chr, snp_pos, snp_dhs[3], snp_dhs[4], snp_dhs[5], snp_dhs[6], snp_dhs[7], snp_dhs[8], snp_dhs[9], snp_dhs[10], snp_dhs[11], snp_dhs[12], snp_dhs[13], snp_dhs[14], snp_dhs[15], snp_dhs[16], snp_dhs[17], snp_dhs[18], dhs[0], gene_chr, gene_start, gene_end, dhs[1], dhs[2], dhs[3], dhs[4], dhs[5], dhs[6],dhs[7], dhs[8], dhs[9], dhs[10], dhs[11], dhs[12], dhs[13], dhs[14], dhs[15], dhs[16], dhs[17]])
+                        
+                    detail_file.close()
     
-   
+        row = row+1
+    summary_file.close()
 
-    for gene in genes:
-        cur.execute("SELECT DISTINCT gene_name, gene_chr, gene_start, gene_stop, dhs_id, dhs_start, dhs_stop, pval from gene_correlations_p05  WHERE gene_name = ? AND pval >= 0.95;", (gene,))
-        data = cur.fetchall()
-        for item in data:
-            rec = [item[0], item[1], item[2], item[3], item[4], item[5], item[6], 1-item[7]]
-            gene_cor.append(rec)
-   
 
-   
-    cur.execute("SELECT * FROM openSamples;")
-    os_result = cur.fetchall()
-    print "\t\t Fetching open samples for DHS."
-    for row in os_result:
-        open_samples.append(row)
-   
-    for gene in gene_cor:
-        if ((gene[2] == 'NA') or (gene[3] == 'NA')):
-            data=[gene[0], gene[4], gene[7], gene[1], gene[2], gene[3], 'NA', 'NA', 'NA', 'NA', 'NA', 'NA']
-            dhs_result.append(data)
-        else:
-            gStart = int(gene[5])
-            gStop = int(gene[6])
-            for os_row in open_samples:
-                cStart = int(os_row[3])
-                cStop = int(os_row[4])
-                if ((gene[1] == os_row[2]) and ((abs(gStart - cStart) <= 100000) or (abs(gStart - cStop) <= 100000) or (abs(gStop - cStart) <= 100000) or (abs(gStop - cStop) <= 100000))):
-                    data = [gene[0], gene[4], gene[7], gene[1], gene[2], gene[3], os_row[0], os_row[1], os_row[6],os_row[7],os_row[8], os_row[9], os_row[10], os_row[11]]
-                    dhs_result.append(data)
-    return dhs_result
+def resolve_output_fp(input_fp):
+    output_fp = input_fp
+    if ('/' in output_fp):
+        while not (output_fp.endswith('/')):
+            output_fp = output_fp[:len(output_fp)-1]
+    else:
+        output_fp = ''
+    print output_fp+"dhs_summary.txt"
+    return output_fp
 
-def output_dhs(dhs_result):
-    with open('dhs_outfile.txt2', 'wb') as f:
-        writer = csv.writer(f, delimiter='\t')
-        header =['gene_name', 'dhs_id', 'pval', 'chr', 'dhs_start', 'dhs_end', 'cluster_id', 'dhs_count',  'openSampleCount', 'openCellTypeCount', 'openTissueCount', 'maxSample', 'maxCellType', 'maxTissue']
-        writer.writerow(header)
-        writer.writerows(dhs_result)
+
  
  
 
     
 
+if __name__ == "__main__":    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", required = True, help = "The \'summary.txt\' output from the hiC query developed by Cam.")
+    parser.add_argument("-d", "--dhsDB", default = "/mnt/3dgenome/projects/tfad334/dhs/dhs-mining/dhs.db", help = "The DNA Regulatory Elements database.")
+    args = parser.parse_args()
+
+    output_dir = resolve_output_fp(args.input)
+
+    snp_genes = prep_input(args.input)
     
-    
-input_file = 'MWC/obesity/obesity_genes.txt'
+    get_SNPGeneDHS(snp_genes, args.dhsDB)
 
-#correlation_input = 'dhs_data/allGeneCorrelations100000.p05_v3.txt'
-#overlap_input = 'dhs_data/TableS05-overlapSummary.txt'
-#concordance_input = 'dhs_data/TableS01-concordanceSummary.csv'
-#openCellTypes_input = 'dhs_data/TableS04-cluster-to-openCellTypes_v3.txt'
-#openSamples_input = 'dhs_data/TableS02-openSamples_v3.txt'
-#motifJaspar_input = 'dhs_data/TableS09-motifJaspar.txt'
-#malignantTissues_input = 'dhs_data/TableS06-results_tissueMalig_v2.txt'
-#sex_input = 'dhs_data/TableS08-results_sex_v3.txt'
-
-#dhsPredictors = 'dhs_data/TableS07-dhsPredictors_v2.bed' #TODO learn how to handle BED files
-dhs112_file = 'dhs_data/dhs112_v3.bed'
-
-genes = prep_gene_list(input_file)
-
-#create_corrTB(correlation_input)
-#create_overlapTB(overlap_input)
-#create_concordanceTB(concordance_input)
-#create_openCellTypesTB(openCellTypes_input)
-#create_dhsPredictorsTB(dhsPredictors_input)
-#create_openSamplesTB(openSamples_input)
-#create_motifJasparTB(motifJaspar_input)
-#create_malignantTissuesTB(malignantTissues_input)
-#create_sexTB(sex_input)
-
-#dhsPred = create_dhsPredTB(dhsPredictors)
-query = get_dhs(genes)
-output_dhs(query)
