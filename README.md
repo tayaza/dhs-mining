@@ -2,8 +2,8 @@
 dhs-mining gives epigenetic information for SNPs-eQTL pairs from [CoDeS3D](https://git.com/alcamerone/codes3d).
 
 The dhs.db (created by init_dhsDB.py) includes the following tables from the 
-[Regulatory Elements DB](http://dnase.genome.duke.edu)(Sheffield et al, 2013):
-'''  
+[Regulatory Elements DB](http://dnase.genome.duke.edu) (Sheffield et al, 2013):
+
 + Gene Correlations (of known genes with DHSs, p values <= 0.05)  
 + Overlap (of DHS, CpG sites and promoters)  
 + Concordance (cell lines, types and tissues of the ENCODE samples in the database)  
@@ -13,4 +13,3 @@ The dhs.db (created by init_dhsDB.py) includes the following tables from the
 + Motif (assigned to transcription factors based on the JASPAR database)  
 + DHS (coordinates of DHSs and their raw signals)  
 + Gene Expression (data of the 112 samples used in the study)   
-'''
