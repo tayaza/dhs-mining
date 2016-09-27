@@ -8,29 +8,9 @@ import argparse
 
 def set_filepath(input_fp):
     output_fp = input_fp
-    if ('/' in output_fp):
-        while not (output_fp.endswith('/')):
-            output_fp = output_fp[:len(output_fp)-1]
+    if output_fp.endswith('/'):
         output_fp = output_fp[:len(output_fp)-1]
-    else:
-        output_fp = ''
-    if not os.path.isdir(output_fp):
-        os.mkdir(output_fp)
     return output_fp
-                        
-
-
-    """
-    with open(gwas_dir+'/snps.txt', 'wb') as all_snps:
-        all_writer = csv.writer(all_snps)
-        for trait in snp_list:
-            for snps in snp_list[trait]:
-                with open(output_fp + '/' + trait + '_snps_nt.txt', 'a') as trait_snps:
-                    trait_writer = csv.writer(trait_snps)
-                    all_writer.writerow([snps])
-                    trait_writer.writerow([snps])
-    print output_fp + '/' + trait + 'snps_.txt'
-    """
 
 def find_genes(gene_file, gwas_file):
     """ See if CODE3D genes are mapped in GWAS records. """
@@ -45,7 +25,6 @@ def find_genes(gene_file, gwas_file):
                     e_gene = line[4]
                     gene_list.append([e_snp, e_gene])
         infile.close()
-    #test_genes = ['NOTCH2', 'PPARG', 'MADD', 'FTO', 'ACP2']
     if os.path.isfile(gwas_file):
         gene_counter = 0
         mapped_counter = 0
@@ -87,7 +66,7 @@ def find_genes(gene_file, gwas_file):
             writer.writerows(output)
         print mapped_counter,  'out of',  gene_counter,  'genes have been previously', \
                    'mapped in GWAS'
-        print 'Find results at '+filepath
+
 def eqtls_by_tissues(eqtls_file):
     tissue_pool = {}
     with open(eqtls_file, 'rb') as infile:
@@ -156,11 +135,9 @@ def genes_by_snps(matched_file):
                         trans.append(gene)
                     to_file = line[4], line[0], line[6], cis, line[7], line[13]
                     writer.writerow(to_file)
-
     with open(filepath + '/genes_by_snps.txt', 'wb') as outfile:
         writer = csv.writer(outfile, delimiter = '\t')
         writer.writerow(['GENE', 'SNPS#', 'SNPs'])
-
         for gene in gene_list:
             snp_number = len(gene_list[gene])
             if snp_number > 1:
@@ -221,7 +198,6 @@ def sort_trans(matched_file):
         writer = csv.writer(outfile, delimiter = '\t')
         writer.writerow(['SNP', 'SNP_CHR', 'SNP_DHS_ID', 'GENES', 'GENE_CHR', \
                              'INTERACTION', 'eQTL_TISSUE'])
-        
         for gene in trans.keys():
             record = trans[gene]
             for row in record:
@@ -229,21 +205,24 @@ def sort_trans(matched_file):
 
 
 if __name__ == "__main__":
-    #parser = argparse.ArgumentParser(description = "")
-    #parser.add_argument("-i", "--input", required = True, help = "Filepath of folder containing downloaded GWAS association from GWAS Catalogue.")
-    #args = parser.parse_args()
-    #gwas_dir = args.input
-
-    CODE3D_file = '/mnt/3dgenome/projects/tfad334/hvn/obesity/codes3d_output/analysis/match.txt'
-    gwas_file = '/mnt/3dgenome/projects/tfad334/hvn/obesity/data/gwas-association-downloaded_2016-07-13-obesity.tsv'
-    sig_eqtls = '/mnt/3dgenome/projects/tfad334/hvn/obesity/codes3d_output/analysis/sig_snp-gene_eqtls.txt'
-
-    matched = '/mnt/3dgenome/projects/tfad334/hvn/obesity/codes3d_output/analysis/match.txt'
-
-    
-    filepath = set_filepath(sig_eqtls)    
-    find_genes(CODE3D_file, gwas_file)    
+    parser = argparse.ArgumentParser(description = "")
+    parser.add_argument("-d", "--dir", required = True, \
+                            help = "Directory with dhsquery results.")
+    parser.add_argument("-g", "--gwas", required = False, \
+                            help = "Downloaded GWAS association from GWAS \
+                            Catalogue.")
+    args = parser.parse_args()
+    gwas_file = args.gwas
+    filepath = set_filepath(args.dir)    
+    sig_eqtls = filepath + '/sig_snp-gene_eqtls.txt'
+    match = filepath + '/match.txt'
+    if gwas_file:
+        find_genes(sig_eqtls, gwas_file)    
+    else:
+        print 'Warning: \t \
+            No GWAS Catalog associations file for the trait is specified or \
+            found!'
     eqtls_by_tissues(sig_eqtls)
-    genes_by_snps(matched)
-    snps_by_genes(matched)
-    sort_trans(matched)
+    genes_by_snps(match)
+    snps_by_genes(match)
+    sort_trans(match)
