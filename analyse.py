@@ -14,58 +14,103 @@ def set_filepath(input_fp):
 
 def find_genes(gene_file, gwas_file):
     """ See if CODE3D genes are mapped in GWAS records. """
-    gene_list = []
+    gene_list = {}
+    gwas_associations = []
     output = []
+    all_mapped_genes = []
+    all_reported_genes = []
+    gwas_mapped = []
+    gwas_unmapped = []
     if os.path.isfile(gene_file):
         with open(gene_file, 'r') as infile:
             for line in infile:
                 if line.startswith('rs'):
                     line = line.strip().split('\t')
-                    e_snp = line[0]
-                    e_gene = line[4]
-                    gene_list.append([e_snp, e_gene])
+                    snp = line[0]
+                    gene = line[4]
+                    snp_list = []
+                    snp_list.append(snp)
+                    if gene not in gene_list.keys():
+                        gene_list[gene] = snp_list
+                    else:
+                        for s in gene_list[gene]:
+                            snp_list.append(s)
+                        gene_list[gene] = snp_list
         infile.close()
     if os.path.isfile(gwas_file):
         gene_counter = 0
         mapped_counter = 0
-        for pair in gene_list:
-            snp = pair[0]
-            gene = pair[1]
-            with open(gwas_file, 'rb') as gwas:
-                mapped = False
-                for row in gwas:
-                    row = row.strip().split('\t')
-                    gwas_snp = row[21]
-                    reported_genes = []
-                    mapped_genes = []
-                    for r_gene in row[13].split():
-                        r_gene = r_gene.replace(',', '')
-                        reported_genes.append(r_gene)
-                    if '-' in reported_genes:
-                        reported_genes.remove('-')
-                    for m_gene in row[14].split():
-                        m_gene = m_gene.replace(',', '')
-                        mapped_genes.append(m_gene)
-                    if '-' in mapped_genes:
-                        mapped_genes.remove('-')
-                    author = row[2]
-                    pubmed_id = row[1]
-                    if gene in reported_genes:
-                        result = snp, gene, gwas_snp, reported_genes, \
-                                   mapped_genes, author, pubmed_id
-                        output.append(result)
-                        if mapped == False:
-                            mapped_counter += 1
-                            mapped = True
-            gwas.close()
-            gene_counter += 1
-        with open(filepath + '/mapped.txt', 'wb') as mapped:
-            writer = csv.writer(mapped, delimiter = '\t')
-            writer.writerow(['SNP', 'GENE', 'GWAS_SNP', 'REPORTED_GENES', \
-                                'MAPPED_GENES', 'AUTHOR', 'PUBMED_ID'])
-            writer.writerows(output)
-        print mapped_counter,  'out of',  gene_counter,  'genes have been previously', \
-                   'mapped in GWAS'
+        with open(gwas_file, 'rb') as gwas:
+            mapped = False
+            for row in gwas:
+                row = row.strip().split('\t')
+                gwas_snp = row[21]
+                reported_genes = []
+                mapped_genes = []
+                for r_gene in row[13].split():
+                    r_gene = r_gene.replace(',', '')
+                    reported_genes.append(r_gene)
+                if '-' in reported_genes:
+                    reported_genes.remove('-')
+                for m_gene in row[14].split():
+                    m_gene = m_gene.replace(',', '')
+                    mapped_genes.append(m_gene)
+                if '-' in mapped_genes:
+                    mapped_genes.remove('-')
+                for g in reported_genes:
+                    if g not in all_reported_genes:
+                        all_reported_genes.append(g)
+                for m in mapped_genes:
+                    if m not in all_mapped_genes:
+                        all_mapped_genes.append(m)
+                row[13] = reported_genes
+                row[14] = mapped_genes
+                gwas_associations.append(row)
+        gwas.close()
+
+    for gene in gene_list.keys():
+        if gene in all_mapped_genes or gene in all_reported_genes:
+            output.append(gene)
+            author_snp = []
+            mapped_counter += 1
+            for line in gwas_associations:
+                if gene in line[13] or gene in line[14]:
+                    same_snp = []
+                    reported_genes = line[13]
+                    mapped_genes = line[14]
+                    snp = line[21]
+                    author = line[2] + ' ' + line[3][:4]
+                    pubmed_id = line[1]
+                    tester = author+snp
+                    if tester not in author_snp:
+                        author_snp.append(tester)
+                        for eqtl_snp in gene_list[gene]:
+                            if eqtl_snp in snp:
+                                same_snp.append('True')
+                            else:
+                                same_snp.append('False')
+                        to_gwas_mapped = gene, gene_list[gene], reported_genes, \
+                            mapped_genes, snp, author, pubmed_id, same_snp
+                        gwas_mapped.append(to_gwas_mapped)
+        else:
+            to_unmapped = gene, gene_list[gene]
+            gwas_unmapped.append(to_unmapped)
+
+    with open(filepath + '/gwas_mapped_genes.txt', 'wb') as mapped:
+        writer = csv.writer(mapped, delimiter = '\t')
+        writer.writerow(['GENE', 'eQTL_SNPS', 'REPORTED_GENES', 'MAPPED_GENES', \
+                             'GWAS_SNP', 'AUTHOR', 'PUBMED_ID', 'SAME_SNP?'])
+        writer.writerows(gwas_mapped)
+    mapped.close()
+
+    with open(filepath + '/gwas_unmapped_genes.txt', 'wb') as unmapped:
+        writer = csv.writer(unmapped, delimiter = '\t')
+        writer.writerow(['GENE', 'eQTL_SNPS'])
+        writer.writerows(gwas_unmapped)
+    unmapped.close()
+
+    print '\t',  mapped_counter,  'out of',  len(gene_list.keys()), \
+        'genes have been previously mapped or reported in GWAS'
 
 def eqtls_by_tissues(eqtls_file):
     tissue_pool = {}
@@ -217,12 +262,13 @@ if __name__ == "__main__":
     sig_eqtls = filepath + '/sig_snp-gene_eqtls.txt'
     match = filepath + '/match.txt'
     if gwas_file:
-        find_genes(sig_eqtls, gwas_file)    
+        find_genes(match, gwas_file)
+        print gwas_file
     else:
         print 'Warning: \t \
             No GWAS Catalog associations file for the trait is specified or \
             found!'
-    eqtls_by_tissues(sig_eqtls)
-    genes_by_snps(match)
-    snps_by_genes(match)
-    sort_trans(match)
+    #eqtls_by_tissues(sig_eqtls)
+    #genes_by_snps(match)
+    #snps_by_genes(match)
+    #sort_trans(match)
