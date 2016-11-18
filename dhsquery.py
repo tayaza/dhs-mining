@@ -178,7 +178,8 @@ def get_snpDHS(snp, snp_chr, snp_pos, dhsDB):
     conn.text_factory =str
     cur = conn.cursor()
     dhs_data = []
-    snp_chr = "chr" + snp_chr
+    if not snp_chr.startswith('chr'):
+        snp_chr = "chr" + snp_chr
     cur.execute("SELECT rowid, chr, start, end FROM dhs112 WHERE chr = ? \
                  AND start <=? AND end >=?;", (snp_chr, snp_pos, snp_pos))
     data = cur.fetchone()
@@ -261,7 +262,7 @@ def get_geneDHS(gene, gene_start, gene_end, dhsDB):
                       open_Samples[1], open_Samples[6], open_Samples[7], \
                       open_Samples[8], open_Samples[9], open_Samples[10], \
                       open_Samples[11])
-         gene_dhs.append(output)
+        gene_dhs.append(output)
     return gene_dhs
 
 
@@ -650,7 +651,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     filepath = set_filepath(args.input)
     snp_genes = sig_SNP_genes(args.input)
-    
     get_SNPGeneDHS(snp_genes, args.dhsDB)
     dhs_filepath = filepath + '/dhs_details.txt'
     match_tissues(snp_genes, dhs_filepath, args.dhsDB)

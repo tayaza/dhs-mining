@@ -13,7 +13,7 @@ def set_filepath(input_fp):
     return output_fp
 
 def find_genes(gene_file, gwas_file):
-    """ See if CODE3D genes are mapped in GWAS records. """
+    """ See if CoDeS3D genes are mapped in GWAS records. """
     gene_list = {}
     gwas_associations = []
     output = []
@@ -67,7 +67,7 @@ def find_genes(gene_file, gwas_file):
                 row[14] = mapped_genes
                 gwas_associations.append(row)
         gwas.close()
-
+    in_line = []
     for gene in gene_list.keys():
         if gene in all_mapped_genes or gene in all_reported_genes:
             output.append(gene)
@@ -87,6 +87,9 @@ def find_genes(gene_file, gwas_file):
                         for eqtl_snp in gene_list[gene]:
                             if eqtl_snp in snp:
                                 same_snp.append('True')
+                                gline = gene, eqtl_snp
+                                if gline not in in_line:
+                                    in_line.append(gline)
                             else:
                                 same_snp.append('False')
                         to_gwas_mapped = gene, gene_list[gene], reported_genes, \
@@ -109,8 +112,25 @@ def find_genes(gene_file, gwas_file):
         writer.writerows(gwas_unmapped)
     unmapped.close()
 
-    print '\t',  mapped_counter,  'out of',  len(gene_list.keys()), \
-        'genes have been previously mapped or reported in GWAS'
+
+    with open(filepath + '/gwas_in_line.txt', 'wb') as inline:
+        writer = csv.writer(inline, delimiter = '\t')
+        writer.writerow(['GENE', 'eQTL_SNPS'])
+        writer.writerows(in_line)
+    inline.close()
+
+    with open(filepath + '/mapped_gwas_genes.txt', 'wb') as mapped:
+        for gene in all_mapped_genes:
+            mapped.write(gene + '\n')
+    mapped.close()
+
+    with open(filepath + '/reported_gwas_genes.txt', 'wb') as mapped:
+        for gene in all_reported_genes:
+            mapped.write(gene + '\n')
+    mapped.close()
+
+   # print '\t',  mapped_counter,  'out of',  len(gene_list.keys()), \
+   #     'genes have been previously mapped or reported in GWAS'
 
 def eqtls_by_tissues(eqtls_file):
     tissue_pool = {}
@@ -249,6 +269,107 @@ def sort_trans(matched_file):
                 writer.writerow(row)
 
 
+def spatial_pairs(summary):
+    pair_list = []
+    check_pairs = []
+    with open(summary, 'rb') as sfile:
+        reader = csv.reader(sfile, delimiter = '\t')
+        next(reader, None)
+        for line in reader:
+            snp = line[0]
+            gene = line[3]
+            test = snp+gene
+            if test not in check_pairs:
+                check_pairs.append(test)
+                pair_list.append((snp, gene))
+                
+    print 'Total spatial SNP-gene pairs : \t', len(pair_list)
+    return pair_list
+
+
+def gwas_significant(gwas_bed, sig_eqtls, match, spatials):
+    gwas_snps_08 = {}
+    sig_eqtls_08 = []
+    match_08 = []
+    genes_08 = []
+    spatial_08 = []
+    snps_08 = []
+    with open(gwas_bed, 'rb') as bed_file:
+        reader = csv.reader(bed_file, delimiter = '\t')
+        next(reader, None)
+        for line in reader:
+            snp = line[3]
+            pval = float(line[4])
+            if pval < 5.0e-08:
+                if snp not in gwas_snps_08.keys():
+                    gwas_snps_08[snp] = pval
+                else:
+                    if pval <= gwas_snps_08[snp]:  # use SNP's lowest pval
+                        gwas_snps_08[snp] = pval
+    bed_file.close()
+
+
+    for snp in gwas_snps_08.keys():
+        with open(sig_eqtls, 'rb') as eqtl_file:
+            reader = csv.reader(eqtl_file, delimiter = '\t')
+            next(reader, None)
+            for line in reader:
+                eqtl_snp = line[0]
+                if eqtl_snp == snp:
+                    sig_eqtls_08.append(line)
+
+        with open(match, 'rb') as match_file:
+            reader = csv.reader(match_file, delimiter = '\t')
+            next(reader, None)
+            for line in reader:
+                eqtl_snp = line[0]
+                gene = line[4]
+                if eqtl_snp == snp:
+                    match_08.append(line)
+                    if gene not in genes_08:
+                        genes_08.append(gene)
+                    if eqtl_snp not in snps_08:
+                        snps_08.append(eqtl_snp)
+
+        for pair in spatials:
+            eqtl_snp = pair[0]
+            if eqtl_snp == snp:
+                spatial_08.append(pair)
+
+
+
+    print 'GWAS significant spatial SNP-gene pairs : \t', len(spatial_08)
+    print 'Number of GWAS significant SNPs : \t', len(gwas_snps_08.keys())
+    print 'Number of GWAS significant SNP eQTL : \t', len(snps_08)
+    print 'Number of SNP-gene eQTLs : \t', len(sig_eqtls_08) 
+    print 'Number of unique significant SNP-gene eQTLs : \t', len(match_08)
+    print 'Number of significant eGenes : \t', len(genes_08)
+    dir_08 = filepath + '/gwas_08'
+    if not os.path.isdir(dir_08):
+        os.mkdir(dir_08)
+    with open(dir_08 + '/sig_eqtls_08.txt', 'wb') as sig_file:
+        writer = csv.writer(sig_file, delimiter = '\t')
+        file_header = ('SNP', 'SNP_Chromosome', 'SNP-Locus', 'Gene_Name', \
+                           'Gene_Chromosome', 'Gene_Start', 'Gene_End', \
+                           'Tissue', 'p-value', 'q-value', 'Cell_Lines', \
+                           'GTEx_cis_p_Threshold', 'cis_SNP_Gene_Interaction' \
+                           'SNP-Gene_Distance', 'Expression_Level_in_eQTL_Tissue'\
+                           'Max_Expressed_Tissue', 'Maximum_Expression_Level', \
+                           'Min_Expressed Tissue', 'Min_Expression_Level')
+        writer.writerow(file_header)
+        writer.writerows(sig_eqtls_08)
+    sig_file.close()
+    with open(dir_08 + '/snp-gene_pairs_08.txt', 'wb') as unique_file:
+        writer = csv.writer(unique_file, delimiter = '\t')
+        file_header = ('SNP', 'SNP_CHR', 'SNP_DHS_ID', 'SNP_OPEN_CELLTYPES', \
+                           'GENE', 'GENE_CHR', 'CIS', 'HIC_CELLTYPE' 'HIC_DHS%', \
+                           'HIC_TISSUE', 'MAX_DHS_CELL', 'MAX_DHS_CELL%', \
+                           'MAX_DHS_TISSUE', 'eQTL_TISSUE', 'GTEx_MAX_TISSUE')
+
+        writer.writerow(file_header)
+        writer.writerows(match_08)
+    unique_file.close()
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description = "")
     parser.add_argument("-d", "--dir", required = True, \
@@ -259,16 +380,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
     gwas_file = args.gwas
     filepath = set_filepath(args.dir)    
-    sig_eqtls = filepath + '/sig_snp-gene_eqtls.txt'
+    sig_eqtls = filepath + '/sig_SNP-gene_eqtls.txt'
     match = filepath + '/match.txt'
+    gwas_bed = filepath + '/gwas_snps.bed'
+    summary = filepath + '/summary.txt'
     if gwas_file:
         find_genes(match, gwas_file)
-        print gwas_file
     else:
         print 'Warning: \t \
             No GWAS Catalog associations file for the trait is specified or \
             found!'
-    #eqtls_by_tissues(sig_eqtls)
-    #genes_by_snps(match)
-    #snps_by_genes(match)
-    #sort_trans(match)
+    eqtls_by_tissues(sig_eqtls)
+    genes_by_snps(match)
+    snps_by_genes(match)
+    sort_trans(match)
+    spatials = spatial_pairs(summary)
+    gwas_significant(gwas_bed, sig_eqtls, match, spatials) 
